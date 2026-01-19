@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ble-simulator": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-p", "1883:1883",
+        "-p", "8000:8000",
+        "--name", "pybtmcp",
+        "pybtmcp:latest"
+      ]
+    }
+  }
+}

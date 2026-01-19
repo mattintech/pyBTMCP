@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pyBTMCP - BLE Simulator</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --card-bg: #16213e;
+            --accent: #0f3460;
+            --text: #e4e4e4;
+            --text-dim: #888;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --error: #f87171;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        h1 { margin-bottom: 0.5rem; }
+        .subtitle { color: var(--text-dim); margin-bottom: 2rem; }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1.5rem;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            background: var(--accent);
+            border: none;
+            color: var(--text);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+        .btn:hover { background: #1a4a7a; }
+
+        /* Settings Panel */
+        .settings-bar {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .setting-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .setting-item label {
+            color: var(--text-dim);
+            font-size: 0.875rem;
+        }
+
+        .toggle {
+            position: relative;
+            width: 50px;
+            height: 26px;
+        }
+
+        .toggle input { opacity: 0; width: 0; height: 0; }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--accent);
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--text);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle input:checked + .toggle-slider { background: var(--success); }
+        .toggle input:checked + .toggle-slider:before { transform: translateX(24px); }
+
+        .unit-label {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            min-width: 60px;
+        }
+
+        /* Devices */
+        .devices {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .device-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--accent);
+        }
+
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .device-id { font-weight: 600; font-size: 1.1rem; }
+
+        .device-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        .status-dot.offline { background: var(--error); }
+
+        .control-group { margin-bottom: 1rem; }
+        .control-group label {
+            display: block;
+            color: var(--text-dim);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--accent);
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--success);
+            cursor: pointer;
+        }
+
+        .value-display {
+            min-width: 80px;
+            text-align: right;
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        select {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+        }
+
+        /* Presets */
+        .presets {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .preset-btn {
+            padding: 0.5rem 1rem;
+            background: var(--accent);
+            border: none;
+            border-radius: 20px;
+            color: var(--text);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .preset-btn:hover { background: #1a4a7a; }
+        .preset-btn.active { background: var(--success); color: var(--bg); }
+
+        .no-devices {
+            text-align: center;
+            color: var(--text-dim);
+            padding: 4rem 2rem;
+            background: var(--card-bg);
+            border-radius: 12px;
+        }
+
+        /* HR Variation indicator */
+        .variation-indicator {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-left: 0.5rem;
+        }
+
+        /* Device info row */
+        .device-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            margin-bottom: 0.5rem;
+            border-bottom: 1px solid var(--accent);
+            font-size: 0.8rem;
+        }
+
+        .device-link {
+            color: var(--success);
+            text-decoration: none;
+        }
+        .device-link:hover {
+            text-decoration: underline;
+        }
+
+        .device-version {
+            color: var(--text-dim);
+        }
+
+        /* WebSocket connection status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            padding: 0.5rem 1rem;
+            background: var(--card-bg);
+            border-radius: 8px;
+        }
+
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+            transition: background 0.3s;
+        }
+        .connection-dot.connected { background: var(--success); }
+        .connection-dot.connecting { background: var(--warning); animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>pyBTMCP</h1>
+            <p class="subtitle">BLE Device Simulator <span id="backendVersion"></span></p>
+        </div>
+        <div class="header-buttons">
+            <div class="connection-status">
+                <span class="connection-dot" id="connectionDot"></span>
+                <span id="connectionText">Disconnected</span>
+            </div>
+            <button class="btn" onclick="loadDevices()">Refresh</button>
+        </div>
+    </div>
+
+    <div class="settings-bar">
+        <div class="setting-item">
+            <label>Units:</label>
+            <span class="unit-label" id="unitLabel">Metric</span>
+            <label class="toggle">
+                <input type="checkbox" id="imperialToggle" onchange="toggleUnits()">
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="unit-label">Imperial</span>
+        </div>
+        <div class="setting-item">
+            <label>HR Variation:</label>
+            <label class="toggle">
+                <input type="checkbox" id="hrVariationToggle" onchange="toggleHrVariation()" checked>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="unit-label" id="hrVariationLabel">On (±3 BPM)</span>
+        </div>
+    </div>
+
+    <div id="devices" class="devices">
+        <div class="no-devices">
+            <p>No devices connected</p>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem;">
+                Connect ESP32 devices to see them here
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        // WebSocket connection
+        let ws = null;
+        let wsReconnectTimeout = null;
+        let wsReconnectAttempts = 0;
+        const WS_RECONNECT_DELAY_BASE = 1000;
+        const WS_RECONNECT_MAX_DELAY = 30000;
+
+        function getWebSocketUrl() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${protocol}//${window.location.host}/ws`;
+        }
+
+        function updateConnectionStatus(status) {
+            const dot = document.getElementById('connectionDot');
+            const text = document.getElementById('connectionText');
+            dot.className = 'connection-dot';
+            if (status === 'connected') {
+                dot.classList.add('connected');
+                text.textContent = 'Live';
+            } else if (status === 'connecting') {
+                dot.classList.add('connecting');
+                text.textContent = 'Connecting...';
+            } else {
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+
+            updateConnectionStatus('connecting');
+
+            try {
+                ws = new WebSocket(getWebSocketUrl());
+
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    updateConnectionStatus('connected');
+                    wsReconnectAttempts = 0;
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        handleWebSocketMessage(message);
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    updateConnectionStatus('disconnected');
+                    scheduleReconnect();
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    updateConnectionStatus('disconnected');
+                };
+            } catch (e) {
+                console.error('Failed to create WebSocket:', e);
+                updateConnectionStatus('disconnected');
+                scheduleReconnect();
+            }
+        }
+
+        function scheduleReconnect() {
+            if (wsReconnectTimeout) {
+                clearTimeout(wsReconnectTimeout);
+            }
+            // Exponential backoff with max delay
+            const delay = Math.min(
+                WS_RECONNECT_DELAY_BASE * Math.pow(2, wsReconnectAttempts),
+                WS_RECONNECT_MAX_DELAY
+            );
+            wsReconnectAttempts++;
+            console.log(`Reconnecting WebSocket in ${delay}ms (attempt ${wsReconnectAttempts})`);
+            wsReconnectTimeout = setTimeout(connectWebSocket, delay);
+        }
+
+        function handleWebSocketMessage(message) {
+            console.log('WebSocket message:', message.type);
+
+            if (message.type === 'initial_state') {
+                // Full device list received on connect
+                renderDevices(message.devices);
+            } else if (message.type === 'device_update') {
+                // Single device updated - update UI efficiently
+                updateDeviceInUI(message.device_id, message.data);
+            }
+        }
+
+        function updateDeviceInUI(deviceId, deviceData) {
+            const container = document.getElementById('devices');
+            const existingCard = container.querySelector(`[data-id="${deviceId}"]`);
+
+            if (!existingCard) {
+                // New device - reload all devices
+                loadDevices();
+                return;
+            }
+
+            // Check if device type changed (need full card re-render)
+            if (existingCard.dataset.type !== (deviceData.type || '')) {
+                loadDevices();
+                return;
+            }
+
+            // Update online/offline status
+            const dot = existingCard.querySelector('.status-dot');
+            const text = existingCard.querySelector('.status-text');
+            if (dot) dot.className = `status-dot ${deviceData.online ? '' : 'offline'}`;
+            if (text) text.textContent = deviceData.online ? 'Online' : 'Offline';
+
+            // Update IP and version if present
+            const infoDiv = existingCard.querySelector('.device-info');
+            if (infoDiv) {
+                let infoHtml = '';
+                if (deviceData.ip) {
+                    infoHtml += `<a href="http://${deviceData.ip}" target="_blank" class="device-link">Admin: ${deviceData.ip}</a>`;
+                }
+                if (deviceData.firmware_version) {
+                    infoHtml += `<span class="device-version">v${deviceData.firmware_version}</span>`;
+                }
+                infoDiv.innerHTML = infoHtml;
+            }
+        }
+
+        // Settings (persisted to localStorage)
+        let settings = {
+            imperial: false,
+            hrVariation: true
+        };
+
+        // HR variation state per device
+        let hrVariationIntervals = {};
+        let currentHrTargets = {};
+        let currentHrValues = {};
+        let activeDevices = new Set(); // Track devices being actively controlled
+
+        // Treadmill presets (stored in metric - km/h)
+        const treadmillPresets = [
+            { name: 'Walk', speed: 5.0, incline: 1 },
+            { name: 'Jog', speed: 8.0, incline: 1 },
+            { name: 'Run', speed: 11.0, incline: 1.5 },
+            { name: 'Sprint', speed: 16.0, incline: 0.5 },
+            { name: 'Hill', speed: 6.5, incline: 8 }
+        ];
+
+        // HR presets
+        const hrPresets = [
+            { name: 'Rest', hr: 65 },
+            { name: 'Warm Up', hr: 100 },
+            { name: 'Fat Burn', hr: 130 },
+            { name: 'Cardio', hr: 150 },
+            { name: 'Peak', hr: 175 }
+        ];
+
+        // Load settings from localStorage
+        function loadSettings() {
+            const saved = localStorage.getItem('pybtmcp_settings');
+            if (saved) {
+                settings = { ...settings, ...JSON.parse(saved) };
+            }
+            document.getElementById('imperialToggle').checked = settings.imperial;
+            document.getElementById('hrVariationToggle').checked = settings.hrVariation;
+            updateSettingsDisplay();
+        }
+
+        function saveSettings() {
+            localStorage.setItem('pybtmcp_settings', JSON.stringify(settings));
+        }
+
+        function toggleUnits() {
+            settings.imperial = document.getElementById('imperialToggle').checked;
+            saveSettings();
+            updateSettingsDisplay();
+            loadDevices(); // Re-render with new units
+        }
+
+        function toggleHrVariation() {
+            settings.hrVariation = document.getElementById('hrVariationToggle').checked;
+            saveSettings();
+            updateSettingsDisplay();
+
+            // Stop or start variation for all HR devices
+            Object.keys(hrVariationIntervals).forEach(deviceId => {
+                if (!settings.hrVariation) {
+                    clearInterval(hrVariationIntervals[deviceId]);
+                    delete hrVariationIntervals[deviceId];
+                }
+            });
+        }
+
+        function updateSettingsDisplay() {
+            document.getElementById('hrVariationLabel').textContent =
+                settings.hrVariation ? 'On (±3 BPM)' : 'Off';
+        }
+
+        // Unit conversion helpers (display only)
+        function kmhToMph(kmh) { return kmh * 0.621371; }
+        function formatSpeed(kmh) {
+            if (settings.imperial) {
+                return `${kmhToMph(kmh).toFixed(1)} mph`;
+            }
+            return `${parseFloat(kmh).toFixed(1)} km/h`;
+        }
+
+        function getSpeedMax() { return settings.imperial ? 15.5 : 25; }
+        function getSpeedStep() { return settings.imperial ? 0.1 : 0.1; }
+        function displayToMetric(displaySpeed) {
+            return settings.imperial ? displaySpeed / 0.621371 : displaySpeed;
+        }
+        function metricToDisplay(metricSpeed) {
+            return settings.imperial ? metricSpeed * 0.621371 : metricSpeed;
+        }
+
+        async function loadDevices() {
+            try {
+                const response = await fetch(`${API_BASE}/devices`);
+                const data = await response.json();
+                renderDevices(data.devices);
+            } catch (error) {
+                console.error('Failed to load devices:', error);
+            }
+        }
+
+        function renderDevices(devices) {
+            const container = document.getElementById('devices');
+
+            if (!devices || devices.length === 0) {
+                container.innerHTML = `
+                    <div class="no-devices">
+                        <p>No devices connected</p>
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem;">
+                            Connect ESP32 devices to see them here
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Check if we need full re-render or just status update
+            const existingCards = container.querySelectorAll('.device-card');
+            const existingIds = new Set([...existingCards].map(c => c.dataset.id));
+            const newIds = new Set(devices.map(d => d.id));
+
+            // Check if device types changed (need full re-render for controls)
+            let typesChanged = false;
+            devices.forEach(device => {
+                const card = container.querySelector(`[data-id="${device.id}"]`);
+                if (card && card.dataset.type !== (device.type || '')) {
+                    typesChanged = true;
+                }
+            });
+
+            // Full re-render if device list or types changed
+            const needsFullRender = typesChanged ||
+                existingIds.size !== newIds.size ||
+                [...existingIds].some(id => !newIds.has(id)) ||
+                [...newIds].some(id => !existingIds.has(id));
+
+            if (needsFullRender) {
+                container.innerHTML = devices.map(device => `
+                    <div class="device-card" data-id="${device.id}" data-type="${device.type || ''}">
+                        <div class="device-header">
+                            <span class="device-id">${device.id}</span>
+                            <div class="device-status">
+                                <span class="status-dot ${device.online ? '' : 'offline'}"></span>
+                                <span class="status-text">${device.online ? 'Online' : 'Offline'}</span>
+                            </div>
+                        </div>
+
+                        <div class="device-info">
+                            ${device.ip ? `<a href="http://${device.ip}" target="_blank" class="device-link">Admin: ${device.ip}</a>` : ''}
+                            ${device.firmware_version ? `<span class="device-version">v${device.firmware_version}</span>` : ''}
+                        </div>
+
+                        <div class="control-group">
+                            <label>Device Type</label>
+                            <select onchange="configureDevice('${device.id}', this.value)">
+                                <option value="" ${!device.type ? 'selected' : ''}>Select type...</option>
+                                <option value="heart_rate" ${device.type === 'heart_rate' ? 'selected' : ''}>Heart Rate Monitor</option>
+                                <option value="treadmill" ${device.type === 'treadmill' ? 'selected' : ''}>Treadmill</option>
+                                <option value="bike" ${device.type === 'bike' ? 'selected' : ''}>Bike / Trainer</option>
+                            </select>
+                        </div>
+
+                        ${renderControls(device)}
+                    </div>
+                `).join('');
+
+                // Setup HR variation for new HR devices
+                devices.forEach(device => {
+                    if (device.type === 'heart_rate' && settings.hrVariation && !hrVariationIntervals[device.id]) {
+                        const startHr = currentHrValues[device.id] || device.values?.heart_rate || 70;
+                        setupHrVariation(device.id, startHr);
+                    }
+                });
+            } else {
+                // Just update online/offline status
+                devices.forEach(device => {
+                    const card = container.querySelector(`[data-id="${device.id}"]`);
+                    if (card) {
+                        const dot = card.querySelector('.status-dot');
+                        const text = card.querySelector('.status-text');
+                        if (dot) dot.className = `status-dot ${device.online ? '' : 'offline'}`;
+                        if (text) text.textContent = device.online ? 'Online' : 'Offline';
+                    }
+                });
+            }
+        }
+
+        function renderControls(device) {
+            if (!device.type) return '';
+            const values = device.values || {};
+
+            if (device.type === 'heart_rate') {
+                const hr = currentHrValues[device.id] || values.heart_rate || 70;
+                if (!currentHrTargets[device.id]) currentHrTargets[device.id] = hr;
+                if (!currentHrValues[device.id]) currentHrValues[device.id] = hr;
+                return `
+                    <div class="presets">
+                        ${hrPresets.map(p => `
+                            <button class="preset-btn"
+                                    onclick="applyHrPresetGradual('${device.id}', ${p.hr})"
+                                    ondblclick="applyHrPresetImmediate('${device.id}', ${p.hr})">${p.name}</button>
+                        `).join('')}
+                    </div>
+                    <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">
+                        Click = gradual transition | Double-click = instant
+                    </p>
+                    <div class="control-group">
+                        <label>Heart Rate Target</label>
+                        <div class="slider-container">
+                            <input type="range" min="30" max="220" value="${currentHrTargets[device.id]}"
+                                   oninput="updateHrTarget('${device.id}', this.value)">
+                            <span class="value-display" id="hr-display-${device.id}">${hr} BPM</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (device.type === 'treadmill') {
+                const speed = values.speed || 0;
+                const incline = values.incline || 0;
+                const displaySpeed = metricToDisplay(speed);
+                return `
+                    <div class="presets">
+                        ${treadmillPresets.map(p => `
+                            <button class="preset-btn" onclick="applyTreadmillPreset('${device.id}', ${p.speed}, ${p.incline})">${p.name}</button>
+                        `).join('')}
+                    </div>
+                    <div class="control-group">
+                        <label>Speed</label>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="${getSpeedMax()}" step="${getSpeedStep()}"
+                                   value="${displaySpeed.toFixed(1)}"
+                                   oninput="updateSpeed('${device.id}', this.value)">
+                            <span class="value-display" id="speed-display-${device.id}">${formatSpeed(speed)}</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Incline</label>
+                        <div class="slider-container">
+                            <input type="range" min="-5" max="30" step="0.5" value="${incline}"
+                                   oninput="updateValue('${device.id}', 'incline', this.value)">
+                            <span class="value-display" id="incline-display-${device.id}">${incline}%</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            if (device.type === 'bike') {
+                return `
+                    <div class="control-group">
+                        <label>Power</label>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="500" value="${values.power || 0}"
+                                   oninput="updateValue('${device.id}', 'power', this.value)">
+                            <span class="value-display">${values.power || 0} W</span>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label>Cadence</label>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="150" value="${values.cadence || 0}"
+                                   oninput="updateValue('${device.id}', 'cadence', this.value)">
+                            <span class="value-display">${values.cadence || 0} RPM</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return '';
+        }
+
+        // HR variation - smooth wandering around target
+        function setupHrVariation(deviceId, targetHr) {
+            if (hrVariationIntervals[deviceId]) {
+                clearInterval(hrVariationIntervals[deviceId]);
+            }
+            if (!settings.hrVariation) return;
+
+            currentHrTargets[deviceId] = targetHr;
+            // Use existing value if we have one, otherwise start at target
+            if (!currentHrValues[deviceId]) {
+                currentHrValues[deviceId] = targetHr;
+            }
+            let trend = 0; // -1, 0, or 1
+
+            hrVariationIntervals[deviceId] = setInterval(() => {
+                const target = currentHrTargets[deviceId];
+                let currentHr = currentHrValues[deviceId];
+
+                // Smoothly drift toward target with small random variation
+                const diff = target - currentHr;
+
+                // Change trend occasionally
+                if (Math.random() < 0.3) {
+                    trend = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+                }
+
+                // Apply small change (max ±1 BPM per interval)
+                let change = 0;
+                if (Math.abs(diff) > 3) {
+                    // Too far from target, move toward it
+                    change = diff > 0 ? 1 : -1;
+                } else {
+                    // Near target, wander slightly
+                    change = trend * (Math.random() < 0.5 ? 1 : 0);
+                }
+
+                currentHr = Math.round(Math.max(30, Math.min(220, currentHr + change)));
+                currentHrValues[deviceId] = currentHr;
+
+                // Send to device
+                sendHrValue(deviceId, currentHr);
+
+                // Update display
+                const display = document.getElementById(`hr-display-${deviceId}`);
+                if (display) {
+                    display.textContent = `${currentHr} BPM`;
+                }
+            }, 1000);
+        }
+
+        // Gradual transition - just change target, let variation do the work
+        function applyHrPresetGradual(deviceId, targetHr) {
+            currentHrTargets[deviceId] = targetHr;
+
+            // Update slider to show target
+            const card = document.querySelector(`[data-id="${deviceId}"]`);
+            const slider = card?.querySelector('input[type="range"]');
+            if (slider) slider.value = targetHr;
+
+            // Ensure variation is running
+            if (!hrVariationIntervals[deviceId] && settings.hrVariation) {
+                const startHr = currentHrValues[deviceId] || targetHr;
+                setupHrVariation(deviceId, startHr);
+                currentHrTargets[deviceId] = targetHr;
+            }
+
+            // If variation is off, just send the value
+            if (!settings.hrVariation) {
+                currentHrValues[deviceId] = targetHr;
+                sendHrValue(deviceId, targetHr);
+                const display = document.getElementById(`hr-display-${deviceId}`);
+                if (display) display.textContent = `${targetHr} BPM`;
+            }
+        }
+
+        // Immediate jump - set both current and target immediately
+        function applyHrPresetImmediate(deviceId, targetHr) {
+            currentHrTargets[deviceId] = targetHr;
+            currentHrValues[deviceId] = targetHr;
+
+            // Update slider
+            const card = document.querySelector(`[data-id="${deviceId}"]`);
+            const slider = card?.querySelector('input[type="range"]');
+            if (slider) slider.value = targetHr;
+
+            // Update display
+            const display = document.getElementById(`hr-display-${deviceId}`);
+            if (display) display.textContent = `${targetHr} BPM`;
+
+            // Send immediately
+            sendHrValue(deviceId, targetHr);
+        }
+
+        function updateHrTarget(deviceId, value) {
+            const hr = parseInt(value);
+            currentHrTargets[deviceId] = hr;
+
+            if (!settings.hrVariation) {
+                sendHrValue(deviceId, hr);
+                const display = document.getElementById(`hr-display-${deviceId}`);
+                if (display) display.textContent = `${hr} BPM`;
+            }
+        }
+
+        async function sendHrValue(deviceId, hr) {
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}/values`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ heart_rate: hr })
+                });
+            } catch (error) {
+                console.error('Failed to send HR:', error);
+            }
+        }
+
+        function updateSpeed(deviceId, displayValue) {
+            const metricSpeed = displayToMetric(parseFloat(displayValue));
+            const display = document.getElementById(`speed-display-${deviceId}`);
+            if (display) display.textContent = formatSpeed(metricSpeed);
+
+            updateValueDebounced(deviceId, 'speed', metricSpeed);
+        }
+
+        function applyTreadmillPreset(deviceId, speedKmh, incline) {
+            const card = document.querySelector(`[data-id="${deviceId}"]`);
+
+            // Update sliders
+            const speedSlider = card.querySelector('input[oninput*="updateSpeed"]');
+            const inclineSlider = card.querySelector('input[oninput*="incline"]');
+
+            if (speedSlider) speedSlider.value = metricToDisplay(speedKmh).toFixed(1);
+            if (inclineSlider) inclineSlider.value = incline;
+
+            // Update displays
+            const speedDisplay = document.getElementById(`speed-display-${deviceId}`);
+            const inclineDisplay = document.getElementById(`incline-display-${deviceId}`);
+            if (speedDisplay) speedDisplay.textContent = formatSpeed(speedKmh);
+            if (inclineDisplay) inclineDisplay.textContent = `${incline}%`;
+
+            // Send values
+            sendTreadmillValues(deviceId, speedKmh, incline);
+        }
+
+        async function sendTreadmillValues(deviceId, speed, incline) {
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}/values`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ speed, incline })
+                });
+            } catch (error) {
+                console.error('Failed to send treadmill values:', error);
+            }
+        }
+
+        async function configureDevice(deviceId, deviceType) {
+            if (!deviceType) return;
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}/configure`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_type: deviceType })
+                });
+                loadDevices();
+            } catch (error) {
+                console.error('Failed to configure device:', error);
+            }
+        }
+
+        let updateTimeouts = {};
+        function updateValueDebounced(deviceId, key, value) {
+            const timeoutKey = `${deviceId}-${key}`;
+            clearTimeout(updateTimeouts[timeoutKey]);
+            updateTimeouts[timeoutKey] = setTimeout(async () => {
+                try {
+                    await fetch(`${API_BASE}/devices/${deviceId}/values`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ [key]: value })
+                    });
+                } catch (error) {
+                    console.error('Failed to update value:', error);
+                }
+            }, 100);
+        }
+
+        function updateValue(deviceId, key, value) {
+            const numValue = parseFloat(value);
+
+            // Update display
+            const display = document.getElementById(`${key}-display-${deviceId}`);
+            if (display) {
+                const units = { incline: '%', power: ' W', cadence: ' RPM' };
+                display.textContent = `${numValue}${units[key] || ''}`;
+            }
+
+            updateValueDebounced(deviceId, key, numValue);
+        }
+
+        // Load backend version
+        async function loadBackendVersion() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                const versionEl = document.getElementById('backendVersion');
+                if (versionEl && data.version) {
+                    versionEl.textContent = `v${data.version}`;
+                }
+            } catch (error) {
+                console.error('Failed to load backend version:', error);
+            }
+        }
+
+        // Initialize
+        loadSettings();
+        loadBackendVersion();
+        connectWebSocket();
+        loadDevices();
+        // Keep polling as fallback (reduced frequency since WebSocket handles most updates)
+        setInterval(loadDevices, 5000);
+    </script>
+</body>
+</html>
