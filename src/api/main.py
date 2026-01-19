@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 # Version info
-__version__ = "1.1.2"
+__version__ = "1.3.0"
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -14,6 +14,7 @@ import os
 from .routes import router
 from .mqtt_client import mqtt_manager
 from .device_registry import device_registry
+from .hr_variation import hr_variation_manager
 
 
 class ConnectionManager:
@@ -62,6 +63,7 @@ async def handle_device_status(topic: str, payload: str):
                 "ble_started": data.get("ble_started", False),
                 "ip": data.get("ip"),
                 "firmware_version": data.get("firmware_version"),
+                "bt_mac": data.get("bt_mac"),
             }
             device_registry.update_device(device_id, update_data)
             print(f"Device {device_id} status updated: {data}")
@@ -97,9 +99,16 @@ async def handle_device_values(topic: str, payload: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle - connect/disconnect MQTT."""
+    """Manage application lifecycle - connect/disconnect MQTT and HR variation."""
     await mqtt_manager.connect()
+    # Wire up HR variation manager dependencies
+    hr_variation_manager.set_dependencies(
+        mqtt_manager=mqtt_manager,
+        device_registry=device_registry,
+        ws_broadcast=ws_manager.broadcast
+    )
     yield
+    await hr_variation_manager.stop_all()
     await mqtt_manager.disconnect()
 
 

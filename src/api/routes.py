@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from .mqtt_client import mqtt_manager
 from .device_registry import device_registry
+from .hr_variation import hr_variation_manager
 
 router = APIRouter()
 
@@ -21,6 +22,14 @@ class DeviceValues(BaseModel):
     incline: float | None = Field(None, ge=-10, le=40)  # percent
     cadence: int | None = Field(None, ge=0, le=300)  # rpm
     power: int | None = Field(None, ge=0, le=2000)  # watts
+    battery: int | None = Field(None, ge=0, le=100)  # battery percentage
+    distance: int | None = Field(None, ge=0)  # distance in meters
+
+
+class HRVariationConfig(BaseModel):
+    """HR variation configuration."""
+    enabled: bool
+    target: int | None = Field(None, ge=30, le=220)
 
 
 @router.get("/devices")
@@ -38,6 +47,29 @@ async def get_device(device_id: str):
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     return device
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(device_id: str):
+    """Remove a device from the registry and clear its retained MQTT messages."""
+    device = device_registry.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    # Stop any HR variation for this device
+    await hr_variation_manager.disable(device_id)
+
+    # Clear retained MQTT messages so device doesn't reappear on restart
+    try:
+        await mqtt_manager.clear_retained(f"ble-sim/{device_id}/status")
+        await mqtt_manager.clear_retained(f"ble-sim/{device_id}/values")
+    except Exception:
+        pass  # MQTT might not be connected
+
+    # Remove from registry
+    device_registry.remove_device(device_id)
+
+    return {"status": "ok", "device_id": device_id, "message": "Device removed"}
 
 
 @router.post("/devices/{device_id}/configure")
@@ -67,3 +99,43 @@ async def set_device_values(device_id: str, values: DeviceValues):
     device_registry.update_device(device_id, {"values": values_dict})
 
     return {"status": "ok", "device_id": device_id, "values": values_dict}
+
+
+@router.get("/devices/{device_id}/hr-variation")
+async def get_hr_variation(device_id: str):
+    """Get HR variation state for a device."""
+    return hr_variation_manager.get_state(device_id)
+
+
+@router.post("/devices/{device_id}/hr-variation")
+async def set_hr_variation(device_id: str, config: HRVariationConfig):
+    """Enable or disable HR variation for a device."""
+    if config.enabled:
+        await hr_variation_manager.enable(device_id, config.target)
+    else:
+        await hr_variation_manager.disable(device_id)
+        # If target provided, set it directly
+        if config.target is not None:
+            await hr_variation_manager.set_target(device_id, config.target)
+
+    return {
+        "status": "ok",
+        "device_id": device_id,
+        **hr_variation_manager.get_state(device_id)
+    }
+
+
+class HRTargetRequest(BaseModel):
+    """HR target request."""
+    target: int = Field(ge=30, le=220)
+
+
+@router.post("/devices/{device_id}/hr-target")
+async def set_hr_target(device_id: str, request: HRTargetRequest):
+    """Set HR target (works with or without variation enabled)."""
+    await hr_variation_manager.set_target(device_id, request.target)
+    return {
+        "status": "ok",
+        "device_id": device_id,
+        **hr_variation_manager.get_state(device_id)
+    }

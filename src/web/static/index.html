@@ -258,6 +258,28 @@
             color: var(--text-dim);
         }
 
+        .device-mac {
+            color: var(--text-dim);
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+
+        .delete-btn {
+            background: var(--error);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 20px;
+            height: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            margin-left: 0.5rem;
+            line-height: 1;
+        }
+        .delete-btn:hover {
+            opacity: 0.8;
+        }
+
         /* WebSocket connection status */
         .connection-status {
             display: flex;
@@ -289,7 +311,7 @@
     <div class="header">
         <div>
             <h1>pyBTMCP</h1>
-            <p class="subtitle">BLE Device Simulator &bull; UI v1.2.3 &bull; API <span id="backendVersion"></span></p>
+            <p class="subtitle">BLE Device Simulator &bull; UI v1.4.0 &bull; API <span id="backendVersion"></span></p>
         </div>
         <div class="header-buttons">
             <div class="connection-status">
@@ -424,6 +446,16 @@
             } else if (message.type === 'device_update') {
                 // Single device updated - update UI efficiently
                 updateDeviceInUI(message.device_id, message.data);
+            } else if (message.type === 'hr_update') {
+                // HR value update from server-side variation
+                updateHrDisplay(message.device_id, message.heart_rate);
+            }
+        }
+
+        function updateHrDisplay(deviceId, hr) {
+            const display = document.getElementById(`hr-display-${deviceId}`);
+            if (display) {
+                display.textContent = `${hr} BPM`;
             }
         }
 
@@ -449,17 +481,38 @@
             if (dot) dot.className = `status-dot ${deviceData.online ? '' : 'offline'}`;
             if (text) text.textContent = deviceData.online ? 'Online' : 'Offline';
 
-            // Update IP and version if present
+            // Update IP, MAC, and version if present
             const infoDiv = existingCard.querySelector('.device-info');
             if (infoDiv) {
                 let infoHtml = '';
                 if (deviceData.ip) {
                     infoHtml += `<a href="http://${deviceData.ip}" target="_blank" class="device-link">Admin: ${deviceData.ip}</a>`;
                 }
+                if (deviceData.bt_mac) {
+                    infoHtml += `<span class="device-mac">BT: ${deviceData.bt_mac}</span>`;
+                }
                 if (deviceData.firmware_version) {
                     infoHtml += `<span class="device-version">v${deviceData.firmware_version}</span>`;
                 }
                 infoDiv.innerHTML = infoHtml;
+            }
+
+            // Update values if present
+            const values = deviceData.values || {};
+            if (values.heart_rate !== undefined) {
+                updateHrDisplay(deviceId, values.heart_rate);
+            }
+            if (values.speed !== undefined) {
+                const speedDisplay = document.getElementById(`speed-display-${deviceId}`);
+                if (speedDisplay) speedDisplay.textContent = formatSpeed(values.speed);
+            }
+            if (values.distance !== undefined) {
+                const distDisplay = document.getElementById(`distance-display-${deviceId}`);
+                if (distDisplay) distDisplay.textContent = `${values.distance} m`;
+            }
+            if (values.battery !== undefined) {
+                const battDisplay = document.getElementById(`battery-display-${deviceId}`);
+                if (battDisplay) battDisplay.textContent = `${values.battery}%`;
             }
         }
 
@@ -469,11 +522,8 @@
             hrVariation: true
         };
 
-        // HR variation state per device
-        let hrVariationIntervals = {};
-        let currentHrTargets = {};
-        let currentHrValues = {};
-        let activeDevices = new Set(); // Track devices being actively controlled
+        // Track active devices (for UI state only - business logic is server-side)
+        let activeDevices = new Set();
 
         // Treadmill presets (stored in metric - km/h)
         const treadmillPresets = [
@@ -515,18 +565,25 @@
             loadDevices(); // Re-render with new units
         }
 
-        function toggleHrVariation() {
+        async function toggleHrVariation() {
             settings.hrVariation = document.getElementById('hrVariationToggle').checked;
             saveSettings();
             updateSettingsDisplay();
 
-            // Stop or start variation for all HR devices
-            Object.keys(hrVariationIntervals).forEach(deviceId => {
-                if (!settings.hrVariation) {
-                    clearInterval(hrVariationIntervals[deviceId]);
-                    delete hrVariationIntervals[deviceId];
+            // Update all HR devices via API
+            const devices = document.querySelectorAll('.device-card[data-type="heart_rate"]');
+            for (const card of devices) {
+                const deviceId = card.dataset.id;
+                try {
+                    await fetch(`${API_BASE}/devices/${deviceId}/hr-variation`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: settings.hrVariation })
+                    });
+                } catch (error) {
+                    console.error('Failed to toggle HR variation:', error);
                 }
-            });
+            }
         }
 
         function updateSettingsDisplay() {
@@ -605,11 +662,13 @@
                             <div class="device-status">
                                 <span class="status-dot ${device.online ? '' : 'offline'}"></span>
                                 <span class="status-text">${device.online ? 'Online' : 'Offline'}</span>
+                                <button class="delete-btn" onclick="deleteDevice('${device.id}')" title="Remove device">×</button>
                             </div>
                         </div>
 
                         <div class="device-info">
                             ${device.ip ? `<a href="http://${device.ip}" target="_blank" class="device-link">Admin: ${device.ip}</a>` : ''}
+                            ${device.bt_mac ? `<span class="device-mac">BT: ${device.bt_mac}</span>` : ''}
                             ${device.firmware_version ? `<span class="device-version">v${device.firmware_version}</span>` : ''}
                         </div>
 
@@ -627,11 +686,10 @@
                     </div>
                 `).join('');
 
-                // Setup HR variation for new HR devices
+                // Enable HR variation for new HR devices if setting is on
                 devices.forEach(device => {
-                    if (device.type === 'heart_rate' && settings.hrVariation && !hrVariationIntervals[device.id]) {
-                        const startHr = currentHrValues[device.id] || device.values?.heart_rate || 70;
-                        setupHrVariation(device.id, startHr);
+                    if (device.type === 'heart_rate' && settings.hrVariation) {
+                        enableHrVariationForDevice(device.id, device.values?.heart_rate || 70);
                     }
                 });
             } else {
@@ -653,25 +711,19 @@
             const values = device.values || {};
 
             if (device.type === 'heart_rate') {
-                const hr = currentHrValues[device.id] || values.heart_rate || 70;
-                if (!currentHrTargets[device.id]) currentHrTargets[device.id] = hr;
-                if (!currentHrValues[device.id]) currentHrValues[device.id] = hr;
+                const hr = values.heart_rate || 70;
                 return `
                     <div class="presets">
                         ${hrPresets.map(p => `
                             <button class="preset-btn"
-                                    onclick="applyHrPresetGradual('${device.id}', ${p.hr})"
-                                    ondblclick="applyHrPresetImmediate('${device.id}', ${p.hr})">${p.name}</button>
+                                    onclick="setHrTarget('${device.id}', ${p.hr})">${p.name}</button>
                         `).join('')}
                     </div>
-                    <p style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 1rem;">
-                        Click = gradual transition | Double-click = instant
-                    </p>
                     <div class="control-group">
                         <label>Heart Rate Target</label>
                         <div class="slider-container">
-                            <input type="range" min="30" max="220" value="${currentHrTargets[device.id]}"
-                                   oninput="updateHrTarget('${device.id}', this.value)">
+                            <input type="range" min="30" max="220" value="${hr}"
+                                   oninput="setHrTargetDebounced('${device.id}', this.value)">
                             <span class="value-display" id="hr-display-${device.id}">${hr} BPM</span>
                         </div>
                     </div>
@@ -747,133 +799,51 @@
             return '';
         }
 
-        // HR variation - smooth realistic human heart rate simulation
-        const hrVariationState = {};  // Store per-device state
+        // HR control functions - business logic is server-side
+        const hrTargetDebounceTimers = {};
 
-        function setupHrVariation(deviceId, startHr) {
-            if (hrVariationIntervals[deviceId]) {
-                clearInterval(hrVariationIntervals[deviceId]);
-            }
-            if (!settings.hrVariation) return;
-
-            // Only set target if not already set (don't overwrite user's target)
-            if (!currentHrTargets[deviceId]) {
-                currentHrTargets[deviceId] = startHr;
-            }
-            // Use existing value if we have one, otherwise start at startHr
-            if (!currentHrValues[deviceId]) {
-                currentHrValues[deviceId] = startHr;
-            }
-
-            // Initialize smooth variation state
-            if (!hrVariationState[deviceId]) {
-                hrVariationState[deviceId] = {
-                    phase: Math.random() * Math.PI * 2,  // Random start phase
-                    floatHr: currentHrValues[deviceId]   // Floating point HR for smooth transitions
-                };
-            }
-
-            hrVariationIntervals[deviceId] = setInterval(() => {
-                const target = currentHrTargets[deviceId];
-                const state = hrVariationState[deviceId];
-
-                // Slowly advance phase (completes cycle in ~30 seconds)
-                state.phase += 0.2;
-
-                // Smooth sinusoidal base variation (±2 BPM)
-                const sineVariation = Math.sin(state.phase) * 2;
-
-                // Small random walk component (±0.3 per tick, smooths out)
-                const randomWalk = (Math.random() - 0.5) * 0.6;
-
-                // Calculate ideal HR with smooth variation
-                const idealHr = target + sineVariation + randomWalk;
-
-                // Smooth transition toward ideal (move 30% of the way each tick)
-                state.floatHr += (idealHr - state.floatHr) * 0.3;
-
-                // Clamp to ±3 of target
-                state.floatHr = Math.max(target - 3, Math.min(target + 3, state.floatHr));
-
-                // Round for display/transmission
-                const currentHr = Math.round(Math.max(30, Math.min(220, state.floatHr)));
-
-                // Only send if value changed
-                if (currentHr !== currentHrValues[deviceId]) {
-                    currentHrValues[deviceId] = currentHr;
-                    sendHrValue(deviceId, currentHr);
-
-                    const display = document.getElementById(`hr-display-${deviceId}`);
-                    if (display) {
-                        display.textContent = `${currentHr} BPM`;
-                    }
-                }
-            }, 1000);
-        }
-
-        // Gradual transition - just change target, let variation do the work
-        function applyHrPresetGradual(deviceId, targetHr) {
-            currentHrTargets[deviceId] = targetHr;
-
-            // Update slider to show target
-            const card = document.querySelector(`[data-id="${deviceId}"]`);
-            const slider = card?.querySelector('input[type="range"]');
-            if (slider) slider.value = targetHr;
-
-            // Ensure variation is running
-            if (!hrVariationIntervals[deviceId] && settings.hrVariation) {
-                const startHr = currentHrValues[deviceId] || targetHr;
-                setupHrVariation(deviceId, startHr);
-            }
-
-            // If variation is off, just send the value
-            if (!settings.hrVariation) {
-                currentHrValues[deviceId] = targetHr;
-                sendHrValue(deviceId, targetHr);
-                const display = document.getElementById(`hr-display-${deviceId}`);
-                if (display) display.textContent = `${targetHr} BPM`;
-            }
-        }
-
-        // Immediate jump - set both current and target immediately
-        function applyHrPresetImmediate(deviceId, targetHr) {
-            currentHrTargets[deviceId] = targetHr;
-            currentHrValues[deviceId] = targetHr;
-
-            // Update slider
-            const card = document.querySelector(`[data-id="${deviceId}"]`);
-            const slider = card?.querySelector('input[type="range"]');
-            if (slider) slider.value = targetHr;
-
-            // Update display
-            const display = document.getElementById(`hr-display-${deviceId}`);
-            if (display) display.textContent = `${targetHr} BPM`;
-
-            // Send immediately
-            sendHrValue(deviceId, targetHr);
-        }
-
-        function updateHrTarget(deviceId, value) {
-            const hr = parseInt(value);
-            currentHrTargets[deviceId] = hr;
-
-            if (!settings.hrVariation) {
-                sendHrValue(deviceId, hr);
-                const display = document.getElementById(`hr-display-${deviceId}`);
-                if (display) display.textContent = `${hr} BPM`;
-            }
-        }
-
-        async function sendHrValue(deviceId, hr) {
+        async function enableHrVariationForDevice(deviceId, startHr) {
             try {
-                await fetch(`${API_BASE}/devices/${deviceId}/values`, {
+                await fetch(`${API_BASE}/devices/${deviceId}/hr-variation`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ heart_rate: hr })
+                    body: JSON.stringify({ enabled: true, target: startHr })
+                });
+            } catch (error) {
+                console.error('Failed to enable HR variation:', error);
+            }
+        }
+
+        async function setHrTarget(deviceId, targetHr) {
+            // Update slider UI immediately
+            const card = document.querySelector(`[data-id="${deviceId}"]`);
+            const slider = card?.querySelector('input[type="range"]');
+            if (slider) slider.value = targetHr;
+
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}/hr-target`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: targetHr })
                 });
             } catch (error) {
                 console.error('Failed to send HR:', error);
             }
+        }
+
+        function setHrTargetDebounced(deviceId, value) {
+            const hr = parseInt(value);
+            // Update display immediately
+            const display = document.getElementById(`hr-display-${deviceId}`);
+            if (display) display.textContent = `${hr} BPM`;
+
+            // Debounce the API call
+            if (hrTargetDebounceTimers[deviceId]) {
+                clearTimeout(hrTargetDebounceTimers[deviceId]);
+            }
+            hrTargetDebounceTimers[deviceId] = setTimeout(() => {
+                setHrTarget(deviceId, hr);
+            }, 100);
         }
 
         function updateSpeed(deviceId, displayValue) {
@@ -949,6 +919,18 @@
                 loadDevices();
             } catch (error) {
                 console.error('Failed to configure device:', error);
+            }
+        }
+
+        async function deleteDevice(deviceId) {
+            if (!confirm(`Remove device ${deviceId} from the list?`)) return;
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}`, {
+                    method: 'DELETE'
+                });
+                loadDevices();
+            } catch (error) {
+                console.error('Failed to delete device:', error);
             }
         }
 

@@ -102,7 +102,7 @@ class MQTTManager:
             return func
         return decorator
 
-    async def publish(self, topic: str, payload: dict | str):
+    async def publish(self, topic: str, payload: dict | str, retain: bool = False):
         """Publish a message to MQTT."""
         if not self._connected or not self.client:
             raise RuntimeError("MQTT not connected")
@@ -110,7 +110,13 @@ class MQTTManager:
         if isinstance(payload, dict):
             payload = json.dumps(payload)
 
-        await self.client.publish(topic, payload)
+        await self.client.publish(topic, payload, retain=retain)
+
+    async def clear_retained(self, topic: str):
+        """Clear a retained message by publishing empty payload with retain flag."""
+        if not self._connected or not self.client:
+            return
+        await self.client.publish(topic, "", retain=True)
 
     async def configure_device(self, device_id: str, device_type: str):
         """Send configuration command to a device."""

@@ -1,12 +1,11 @@
-#include "web_portal.h"
-#include "config_manager.h"
+#include "services/web_service.h"
+#include "services/config_service.h"
+#include "services/wifi_service.h"
+#include "device_state.h"
 #include <WebServer.h>
 #include <ArduinoJson.h>
 
-WebServer server(80);
-PortalStatus currentStatus = {};
-ResetDistanceCallback resetDistanceCallback = nullptr;
-SetBatteryCallback setBatteryCallback = nullptr;
+static WebServer server(80);
 
 // HTML template with embedded CSS and JS
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
@@ -108,7 +107,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <h1>BLE Simulator</h1>
-    <p class="subtitle"><span id="apName">Loading...</span> &bull; UI v1.1.0</p>
+    <p class="subtitle"><span id="apName">Loading...</span> &bull; UI v1.2.0</p>
 
     <div class="card">
         <h2>Status</h2>
@@ -178,7 +177,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
     <script>
         let configLoaded = false;
 
-        // Load config once on page load
         async function loadConfig() {
             try {
                 const res = await fetch('/api/status');
@@ -197,7 +195,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
-        // Update only status indicators (not form fields)
         async function updateStatus() {
             try {
                 const res = await fetch('/api/status');
@@ -205,7 +202,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 updateStatusDots(data.status);
             } catch (e) {
                 console.error('Failed to update status:', e);
-                // Show disconnected state when device is unreachable
                 updateStatusDots({
                     wifiConnected: false,
                     mqttConnected: false,
@@ -230,7 +226,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 
             document.getElementById('ipAddr').textContent = status.ipAddress || '-';
 
-            // Show heart rate card only when configured as heart rate
             const heartRateCard = document.getElementById('heartRateCard');
             if (status.deviceType === 'Heart Rate') {
                 heartRateCard.classList.remove('hidden');
@@ -240,7 +235,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 heartRateCard.classList.add('hidden');
             }
 
-            // Show treadmill card only when configured as treadmill
             const treadmillCard = document.getElementById('treadmillCard');
             if (status.deviceType === 'Treadmill') {
                 treadmillCard.classList.remove('hidden');
@@ -302,7 +296,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
-        // Battery slider handler
         document.getElementById('batterySlider').addEventListener('input', async (e) => {
             const level = e.target.value;
             document.getElementById('batteryValue').textContent = level + '%';
@@ -317,7 +310,6 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
         });
 
-        // Load config with retry, then update status periodically
         async function init() {
             let retries = 3;
             while (retries > 0) {
@@ -337,36 +329,44 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRoot() {
+WebService& WebService::getInstance() {
+    static WebService instance;
+    return instance;
+}
+
+void WebService::handleRoot() {
     server.send(200, "text/html", INDEX_HTML);
 }
 
-void handleGetStatus() {
+void WebService::handleGetStatus() {
     JsonDocument doc;
 
-    doc["apName"] = configManager.getAPName();
+    doc["apName"] = configService.getAPName();
 
     JsonObject config = doc["config"].to<JsonObject>();
-    config["ssid"] = configManager.getWifiSsid();
-    config["mqttHost"] = configManager.getMqttHost();
-    config["mqttPort"] = configManager.getMqttPort();
-    config["deviceId"] = configManager.getDeviceId();
+    config["ssid"] = configService.getWifiSsid();
+    config["mqttHost"] = configService.getMqttHost();
+    config["mqttPort"] = configService.getMqttPort();
+    config["deviceId"] = configService.getDeviceId();
+
+    const auto& connState = deviceState.getConnectionState();
+    const auto& values = deviceState.getValues();
 
     JsonObject status = doc["status"].to<JsonObject>();
-    status["wifiConnected"] = currentStatus.wifiConnected;
-    status["mqttConnected"] = currentStatus.mqttConnected;
-    status["bleStarted"] = currentStatus.bleStarted;
-    status["deviceType"] = currentStatus.deviceType;
-    status["ipAddress"] = currentStatus.ipAddress;
-    status["treadmillDistance"] = currentStatus.treadmillDistance;
-    status["batteryLevel"] = currentStatus.batteryLevel;
+    status["wifiConnected"] = connState.wifiConnected;
+    status["mqttConnected"] = connState.mqttConnected;
+    status["bleStarted"] = deviceState.isBleStarted();
+    status["deviceType"] = deviceState.getDeviceTypeString();
+    status["ipAddress"] = connState.ipAddress;
+    status["treadmillDistance"] = values.treadmillDistance;
+    status["batteryLevel"] = values.batteryLevel;
 
     String response;
     serializeJson(doc, response);
     server.send(200, "application/json", response);
 }
 
-void handlePostConfig() {
+void WebService::handlePostConfig() {
     if (!server.hasArg("plain")) {
         server.send(400, "application/json", "{\"error\":\"No body\"}");
         return;
@@ -380,26 +380,25 @@ void handlePostConfig() {
         return;
     }
 
-    // Update configuration
     String ssid = doc["ssid"] | "";
     String password = doc["password"] | "";
     String mqttHost = doc["mqtt_host"] | "";
     uint16_t mqttPort = doc["mqtt_port"] | 1883;
     String deviceId = doc["device_id"] | "";
 
-    configManager.setWifiCredentials(ssid, password);
-    configManager.setMqttConfig(mqttHost, mqttPort);
-    configManager.setDeviceId(deviceId);
-    configManager.save();
+    configService.setWifiCredentials(ssid, password);
+    configService.setMqttConfig(mqttHost, mqttPort);
+    configService.setDeviceId(deviceId);
+    configService.save();
 
     server.send(200, "application/json", "{\"success\":true}");
 
-    // Trigger reconnect (will be handled in main loop)
     Serial.println("Configuration updated, reconnecting...");
+    wifiService.reconnect();
 }
 
-void handleReset() {
-    configManager.clear();
+void WebService::handleReset() {
+    configService.clear();
     server.send(200, "application/json", "{\"success\":true}");
 
     Serial.println("Configuration reset, rebooting...");
@@ -407,19 +406,12 @@ void handleReset() {
     ESP.restart();
 }
 
-void handleResetDistance() {
-    if (resetDistanceCallback) {
-        resetDistanceCallback();
-        Serial.println("Treadmill distance reset");
-    }
+void WebService::handleResetDistance() {
+    deviceState.resetTreadmillDistance();
     server.send(200, "application/json", "{\"success\":true}");
 }
 
-void setResetDistanceCallback(ResetDistanceCallback callback) {
-    resetDistanceCallback = callback;
-}
-
-void handleSetBattery() {
+void WebService::handleSetBattery() {
     if (!server.hasArg("plain")) {
         server.send(400, "application/json", "{\"error\":\"No body\"}");
         return;
@@ -436,35 +428,25 @@ void handleSetBattery() {
     uint8_t level = doc["level"] | 100;
     if (level > 100) level = 100;
 
-    if (setBatteryCallback) {
-        setBatteryCallback(level);
-        Serial.print("Battery level set to: ");
-        Serial.println(level);
-    }
+    deviceState.setBatteryLevel(level);
+    Serial.print("Battery level set via web UI: ");
+    Serial.println(level);
 
     server.send(200, "application/json", "{\"success\":true}");
 }
 
-void setSetBatteryCallback(SetBatteryCallback callback) {
-    setBatteryCallback = callback;
-}
-
-void setupWebPortal() {
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/api/status", HTTP_GET, handleGetStatus);
-    server.on("/api/config", HTTP_POST, handlePostConfig);
-    server.on("/api/reset", HTTP_POST, handleReset);
-    server.on("/api/reset-distance", HTTP_POST, handleResetDistance);
-    server.on("/api/set-battery", HTTP_POST, handleSetBattery);
+void WebService::setup() {
+    server.on("/", HTTP_GET, []() { webService.handleRoot(); });
+    server.on("/api/status", HTTP_GET, []() { webService.handleGetStatus(); });
+    server.on("/api/config", HTTP_POST, []() { webService.handlePostConfig(); });
+    server.on("/api/reset", HTTP_POST, []() { webService.handleReset(); });
+    server.on("/api/reset-distance", HTTP_POST, []() { webService.handleResetDistance(); });
+    server.on("/api/set-battery", HTTP_POST, []() { webService.handleSetBattery(); });
 
     server.begin();
     Serial.println("Web portal started on http://192.168.4.1");
 }
 
-void handleWebPortal() {
+void WebService::loop() {
     server.handleClient();
-}
-
-void updatePortalStatus(const PortalStatus& status) {
-    currentStatus = status;
 }
