@@ -63,11 +63,22 @@ async def delete_device(device_id: str):
     try:
         await mqtt_manager.clear_retained(f"ble-sim/{device_id}/status")
         await mqtt_manager.clear_retained(f"ble-sim/{device_id}/values")
-    except Exception:
-        pass  # MQTT might not be connected
+    except Exception as e:
+        # Log the error but continue with deletion
+        print(f"Warning: Failed to clear MQTT retained messages for {device_id}: {e}")
 
-    # Remove from registry
+    # Remove from registry (also marks as deleted to block re-registration)
     device_registry.remove_device(device_id)
+
+    # Broadcast deletion to all WebSocket clients so they remove the device card
+    try:
+        from .main import ws_manager
+        await ws_manager.broadcast({
+            "type": "device_deleted",
+            "device_id": device_id
+        })
+    except Exception as e:
+        print(f"Warning: Failed to broadcast device deletion: {e}")
 
     return {"status": "ok", "device_id": device_id, "message": "Device removed"}
 

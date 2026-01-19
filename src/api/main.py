@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 # Version info
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -56,7 +56,10 @@ async def handle_device_status(topic: str, payload: str):
         device_id = parts[1]
         try:
             data = json.loads(payload)
-            device_registry.register_device(device_id)
+            # Skip if device was recently deleted (prevents stale MQTT messages from re-registering)
+            if not device_registry.register_device(device_id):
+                print(f"Ignoring status from deleted device: {device_id}")
+                return
             update_data = {
                 "online": data.get("online", True),
                 "type": data.get("type"),
@@ -85,7 +88,10 @@ async def handle_device_values(topic: str, payload: str):
         device_id = parts[1]
         try:
             data = json.loads(payload)
-            device_registry.update_device(device_id, {"values": data})
+            # Skip if device was recently deleted
+            if not device_registry.update_device(device_id, {"values": data}):
+                print(f"Ignoring values from deleted device: {device_id}")
+                return
             print(f"Device {device_id} values updated: {data}")
             # Broadcast to WebSocket clients
             await ws_manager.broadcast({

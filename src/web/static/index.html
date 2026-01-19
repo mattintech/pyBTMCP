@@ -446,10 +446,34 @@
             } else if (message.type === 'device_update') {
                 // Single device updated - update UI efficiently
                 updateDeviceInUI(message.device_id, message.data);
+            } else if (message.type === 'device_deleted') {
+                // Device was deleted - remove from UI
+                removeDeviceFromUI(message.device_id);
             } else if (message.type === 'hr_update') {
                 // HR value update from server-side variation
                 updateHrDisplay(message.device_id, message.heart_rate);
             }
+        }
+
+        function removeDeviceFromUI(deviceId) {
+            const container = document.getElementById('devices');
+            const card = container.querySelector(`[data-id="${deviceId}"]`);
+            if (card) {
+                card.remove();
+                console.log(`Removed deleted device card: ${deviceId}`);
+            }
+            // Clean up any pending timers for this device
+            if (hrTargetDebounceTimers[deviceId]) {
+                clearTimeout(hrTargetDebounceTimers[deviceId]);
+                delete hrTargetDebounceTimers[deviceId];
+            }
+            // Clean up any pending value update timers
+            Object.keys(updateTimeouts).forEach(key => {
+                if (key.startsWith(deviceId + '-')) {
+                    clearTimeout(updateTimeouts[key]);
+                    delete updateTimeouts[key];
+                }
+            });
         }
 
         function updateHrDisplay(deviceId, hr) {
@@ -925,12 +949,21 @@
         async function deleteDevice(deviceId) {
             if (!confirm(`Remove device ${deviceId} from the list?`)) return;
             try {
-                await fetch(`${API_BASE}/devices/${deviceId}`, {
+                const response = await fetch(`${API_BASE}/devices/${deviceId}`, {
                     method: 'DELETE'
                 });
-                loadDevices();
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    console.error('Failed to delete device:', error.detail || response.statusText);
+                    alert(`Failed to delete device: ${error.detail || response.statusText}`);
+                    return;
+                }
+                // WebSocket broadcast will handle removing the device from UI
+                // But also remove locally in case WebSocket is not connected
+                removeDeviceFromUI(deviceId);
             } catch (error) {
                 console.error('Failed to delete device:', error);
+                alert('Failed to delete device. Check console for details.');
             }
         }
 

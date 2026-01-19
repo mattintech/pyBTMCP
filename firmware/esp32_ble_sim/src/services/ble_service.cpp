@@ -12,6 +12,11 @@ static NimBLECharacteristic* pHeartRateMeasurement = nullptr;
 static NimBLECharacteristic* pBatteryLevel = nullptr;
 static NimBLECharacteristic* pTreadmillData = nullptr;
 
+// Track created services for cleanup
+static NimBLEService* pHeartRateService = nullptr;
+static NimBLEService* pBatteryService = nullptr;
+static NimBLEService* pFitnessMachineService = nullptr;
+
 static bool bleInitialized = false;
 
 // Forward declare for callback
@@ -97,13 +102,32 @@ void BleService::initBLE() {
 void BleService::stop() {
     if (pAdvertising) {
         pAdvertising->stop();
+        // Clear all service UUIDs from advertising
+        pAdvertising->reset();
     }
 
+    // Remove existing services from the server
+    if (pServer) {
+        if (pHeartRateService) {
+            pServer->removeService(pHeartRateService);
+            pHeartRateService = nullptr;
+        }
+        if (pBatteryService) {
+            pServer->removeService(pBatteryService);
+            pBatteryService = nullptr;
+        }
+        if (pFitnessMachineService) {
+            pServer->removeService(pFitnessMachineService);
+            pFitnessMachineService = nullptr;
+        }
+    }
+
+    // Clear characteristic pointers
     pHeartRateMeasurement = nullptr;
     pBatteryLevel = nullptr;
     pTreadmillData = nullptr;
 
-    Serial.println("BLE stopped");
+    Serial.println("BLE stopped and services cleaned up");
 }
 
 // ============================================
@@ -112,29 +136,28 @@ void BleService::stop() {
 void BleService::setupHeartRate() {
     Serial.println("Setting up Heart Rate Service...");
 
-    if (pAdvertising) {
-        pAdvertising->stop();
-    }
+    // Clean up any existing services first
+    stop();
 
     // Create Heart Rate Service
-    NimBLEService* pHRService = pServer->createService(HEART_RATE_SERVICE_UUID);
+    pHeartRateService = pServer->createService(HEART_RATE_SERVICE_UUID);
 
-    pHeartRateMeasurement = pHRService->createCharacteristic(
+    pHeartRateMeasurement = pHeartRateService->createCharacteristic(
         HEART_RATE_MEASUREMENT_UUID,
         NIMBLE_PROPERTY::NOTIFY
     );
 
-    NimBLECharacteristic* pBodySensorLocation = pHRService->createCharacteristic(
+    NimBLECharacteristic* pBodySensorLocation = pHeartRateService->createCharacteristic(
         BODY_SENSOR_LOCATION_UUID,
         NIMBLE_PROPERTY::READ
     );
     uint8_t sensorLocation = 1; // Chest
     pBodySensorLocation->setValue(&sensorLocation, 1);
 
-    pHRService->start();
+    pHeartRateService->start();
 
     // Create Battery Service
-    NimBLEService* pBatteryService = pServer->createService(BATTERY_SERVICE_UUID);
+    pBatteryService = pServer->createService(BATTERY_SERVICE_UUID);
 
     pBatteryLevel = pBatteryService->createCharacteristic(
         BATTERY_LEVEL_UUID,
@@ -164,13 +187,12 @@ void BleService::setupHeartRate() {
 void BleService::setupTreadmill() {
     Serial.println("Setting up Fitness Machine Service (Treadmill)...");
 
-    if (pAdvertising) {
-        pAdvertising->stop();
-    }
+    // Clean up any existing services first
+    stop();
 
-    NimBLEService* pService = pServer->createService(FITNESS_MACHINE_SERVICE_UUID);
+    pFitnessMachineService = pServer->createService(FITNESS_MACHINE_SERVICE_UUID);
 
-    NimBLECharacteristic* pFeature = pService->createCharacteristic(
+    NimBLECharacteristic* pFeature = pFitnessMachineService->createCharacteristic(
         FITNESS_MACHINE_FEATURE_UUID,
         NIMBLE_PROPERTY::READ
     );
@@ -181,12 +203,12 @@ void BleService::setupTreadmill() {
     };
     pFeature->setValue(featureData, 8);
 
-    pTreadmillData = pService->createCharacteristic(
+    pTreadmillData = pFitnessMachineService->createCharacteristic(
         TREADMILL_DATA_UUID,
         NIMBLE_PROPERTY::NOTIFY
     );
 
-    pService->start();
+    pFitnessMachineService->start();
 
     pAdvertising->addServiceUUID(FITNESS_MACHINE_SERVICE_UUID);
     pAdvertising->setScanResponse(true);

@@ -7,9 +7,9 @@ DeviceState& DeviceState::getInstance() {
 
 const char* DeviceState::getDeviceTypeString() const {
     switch (deviceType) {
-        case DeviceType::HEART_RATE: return "Heart Rate";
-        case DeviceType::TREADMILL: return "Treadmill";
-        default: return "Not configured";
+        case DeviceType::HEART_RATE: return "heart_rate";
+        case DeviceType::TREADMILL: return "treadmill";
+        default: return "";
     }
 }
 
