@@ -289,7 +289,7 @@
     <div class="header">
         <div>
             <h1>pyBTMCP</h1>
-            <p class="subtitle">BLE Device Simulator <span id="backendVersion"></span></p>
+            <p class="subtitle">BLE Device Simulator &bull; UI v1.2.3 &bull; API <span id="backendVersion"></span></p>
         </div>
         <div class="header-buttons">
             <div class="connection-status">
@@ -675,6 +675,14 @@
                             <span class="value-display" id="hr-display-${device.id}">${hr} BPM</span>
                         </div>
                     </div>
+                    <div class="control-group">
+                        <label>Battery Level</label>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="${values.battery || 100}"
+                                   oninput="updateBattery('${device.id}', this.value)">
+                            <span class="value-display" id="battery-display-${device.id}">${values.battery || 100}%</span>
+                        </div>
+                    </div>
                 `;
             }
 
@@ -705,6 +713,13 @@
                             <span class="value-display" id="incline-display-${device.id}">${incline}%</span>
                         </div>
                     </div>
+                    <div class="control-group">
+                        <label>Distance</label>
+                        <div class="slider-container" style="justify-content: space-between;">
+                            <span class="value-display" id="distance-display-${device.id}">${values.distance || 0} m</span>
+                            <button class="preset-btn" onclick="resetDistance('${device.id}')" style="margin: 0; padding: 0.25rem 0.75rem;">Reset</button>
+                        </div>
+                    </div>
                 `;
             }
 
@@ -732,52 +747,66 @@
             return '';
         }
 
-        // HR variation - smooth wandering around target
-        function setupHrVariation(deviceId, targetHr) {
+        // HR variation - smooth realistic human heart rate simulation
+        const hrVariationState = {};  // Store per-device state
+
+        function setupHrVariation(deviceId, startHr) {
             if (hrVariationIntervals[deviceId]) {
                 clearInterval(hrVariationIntervals[deviceId]);
             }
             if (!settings.hrVariation) return;
 
-            currentHrTargets[deviceId] = targetHr;
-            // Use existing value if we have one, otherwise start at target
-            if (!currentHrValues[deviceId]) {
-                currentHrValues[deviceId] = targetHr;
+            // Only set target if not already set (don't overwrite user's target)
+            if (!currentHrTargets[deviceId]) {
+                currentHrTargets[deviceId] = startHr;
             }
-            let trend = 0; // -1, 0, or 1
+            // Use existing value if we have one, otherwise start at startHr
+            if (!currentHrValues[deviceId]) {
+                currentHrValues[deviceId] = startHr;
+            }
+
+            // Initialize smooth variation state
+            if (!hrVariationState[deviceId]) {
+                hrVariationState[deviceId] = {
+                    phase: Math.random() * Math.PI * 2,  // Random start phase
+                    floatHr: currentHrValues[deviceId]   // Floating point HR for smooth transitions
+                };
+            }
 
             hrVariationIntervals[deviceId] = setInterval(() => {
                 const target = currentHrTargets[deviceId];
-                let currentHr = currentHrValues[deviceId];
+                const state = hrVariationState[deviceId];
 
-                // Smoothly drift toward target with small random variation
-                const diff = target - currentHr;
+                // Slowly advance phase (completes cycle in ~30 seconds)
+                state.phase += 0.2;
 
-                // Change trend occasionally
-                if (Math.random() < 0.3) {
-                    trend = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
-                }
+                // Smooth sinusoidal base variation (±2 BPM)
+                const sineVariation = Math.sin(state.phase) * 2;
 
-                // Apply small change (max ±1 BPM per interval)
-                let change = 0;
-                if (Math.abs(diff) > 3) {
-                    // Too far from target, move toward it
-                    change = diff > 0 ? 1 : -1;
-                } else {
-                    // Near target, wander slightly
-                    change = trend * (Math.random() < 0.5 ? 1 : 0);
-                }
+                // Small random walk component (±0.3 per tick, smooths out)
+                const randomWalk = (Math.random() - 0.5) * 0.6;
 
-                currentHr = Math.round(Math.max(30, Math.min(220, currentHr + change)));
-                currentHrValues[deviceId] = currentHr;
+                // Calculate ideal HR with smooth variation
+                const idealHr = target + sineVariation + randomWalk;
 
-                // Send to device
-                sendHrValue(deviceId, currentHr);
+                // Smooth transition toward ideal (move 30% of the way each tick)
+                state.floatHr += (idealHr - state.floatHr) * 0.3;
 
-                // Update display
-                const display = document.getElementById(`hr-display-${deviceId}`);
-                if (display) {
-                    display.textContent = `${currentHr} BPM`;
+                // Clamp to ±3 of target
+                state.floatHr = Math.max(target - 3, Math.min(target + 3, state.floatHr));
+
+                // Round for display/transmission
+                const currentHr = Math.round(Math.max(30, Math.min(220, state.floatHr)));
+
+                // Only send if value changed
+                if (currentHr !== currentHrValues[deviceId]) {
+                    currentHrValues[deviceId] = currentHr;
+                    sendHrValue(deviceId, currentHr);
+
+                    const display = document.getElementById(`hr-display-${deviceId}`);
+                    if (display) {
+                        display.textContent = `${currentHr} BPM`;
+                    }
                 }
             }, 1000);
         }
@@ -795,7 +824,6 @@
             if (!hrVariationIntervals[deviceId] && settings.hrVariation) {
                 const startHr = currentHrValues[deviceId] || targetHr;
                 setupHrVariation(deviceId, startHr);
-                currentHrTargets[deviceId] = targetHr;
             }
 
             // If variation is off, just send the value
@@ -854,6 +882,28 @@
             if (display) display.textContent = formatSpeed(metricSpeed);
 
             updateValueDebounced(deviceId, 'speed', metricSpeed);
+        }
+
+        function updateBattery(deviceId, value) {
+            const display = document.getElementById(`battery-display-${deviceId}`);
+            if (display) display.textContent = `${value}%`;
+
+            updateValueDebounced(deviceId, 'battery', parseInt(value));
+        }
+
+        async function resetDistance(deviceId) {
+            const display = document.getElementById(`distance-display-${deviceId}`);
+            if (display) display.textContent = '0 m';
+
+            try {
+                await fetch(`${API_BASE}/devices/${deviceId}/values`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ distance: 0 })
+                });
+            } catch (error) {
+                console.error('Failed to reset distance:', error);
+            }
         }
 
         function applyTreadmillPreset(deviceId, speedKmh, incline) {

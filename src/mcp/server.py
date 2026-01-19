@@ -208,6 +208,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             device_id = arguments["device_id"]
             bpm = arguments["bpm"]
 
+            # Validate BPM range
+            if not (30 <= bpm <= 220):
+                return [TextContent(
+                    type="text",
+                    text=f"Error: BPM must be between 30 and 220, got {bpm}"
+                )]
+
             await mqtt_client.publish(
                 f"ble-sim/{device_id}/set",
                 json.dumps({"heart_rate": bpm})

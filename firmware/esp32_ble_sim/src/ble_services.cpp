@@ -20,6 +20,9 @@ static NimBLEAdvertising* pAdvertising = nullptr;
 // Heart Rate
 static NimBLECharacteristic* pHeartRateMeasurement = nullptr;
 
+// Battery
+static NimBLECharacteristic* pBatteryLevel = nullptr;
+
 // Treadmill
 static NimBLECharacteristic* pTreadmillData = nullptr;
 
@@ -66,6 +69,7 @@ void stopBLE() {
 
     // Clear services (will be recreated on next setup)
     pHeartRateMeasurement = nullptr;
+    pBatteryLevel = nullptr;
     pTreadmillData = nullptr;
 
     Serial.println("BLE stopped");
@@ -83,11 +87,11 @@ void setupBLE_HeartRate() {
     }
 
     // Create Heart Rate Service
-    NimBLEService* pService = pServer->createService(HEART_RATE_SERVICE_UUID);
+    NimBLEService* pHRService = pServer->createService(HEART_RATE_SERVICE_UUID);
 
     // Heart Rate Measurement Characteristic
     // Flags: Notify
-    pHeartRateMeasurement = pService->createCharacteristic(
+    pHeartRateMeasurement = pHRService->createCharacteristic(
         HEART_RATE_MEASUREMENT_UUID,
         NIMBLE_PROPERTY::NOTIFY
     );
@@ -95,18 +99,34 @@ void setupBLE_HeartRate() {
     // Body Sensor Location Characteristic
     // Flags: Read
     // Value: 1 = Chest
-    NimBLECharacteristic* pBodySensorLocation = pService->createCharacteristic(
+    NimBLECharacteristic* pBodySensorLocation = pHRService->createCharacteristic(
         BODY_SENSOR_LOCATION_UUID,
         NIMBLE_PROPERTY::READ
     );
     uint8_t sensorLocation = 1; // Chest
     pBodySensorLocation->setValue(&sensorLocation, 1);
 
-    // Start the service
-    pService->start();
+    // Start Heart Rate service
+    pHRService->start();
+
+    // Create Battery Service
+    NimBLEService* pBatteryService = pServer->createService(BATTERY_SERVICE_UUID);
+
+    // Battery Level Characteristic
+    // Flags: Read, Notify
+    pBatteryLevel = pBatteryService->createCharacteristic(
+        BATTERY_LEVEL_UUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    );
+    uint8_t initialBattery = 100;
+    pBatteryLevel->setValue(&initialBattery, 1);
+
+    // Start Battery service
+    pBatteryService->start();
 
     // Configure advertising
     pAdvertising->addServiceUUID(HEART_RATE_SERVICE_UUID);
+    pAdvertising->addServiceUUID(BATTERY_SERVICE_UUID);
     pAdvertising->setScanResponse(true);
     pAdvertising->setMinPreferred(0x06);
     pAdvertising->setMaxPreferred(0x12);
@@ -117,7 +137,7 @@ void setupBLE_HeartRate() {
     // Start advertising
     NimBLEDevice::startAdvertising();
 
-    Serial.println("Heart Rate Service started, advertising...");
+    Serial.println("Heart Rate + Battery Services started, advertising...");
 }
 
 // ============================================
@@ -202,9 +222,22 @@ void notifyHeartRate(uint8_t bpm) {
 }
 
 // ============================================
+// Battery Level Update
+// ============================================
+void updateBatteryLevel(uint8_t level) {
+    if (!pBatteryLevel) return;
+
+    // Clamp to 0-100
+    if (level > 100) level = 100;
+
+    pBatteryLevel->setValue(&level, 1);
+    pBatteryLevel->notify();
+}
+
+// ============================================
 // Treadmill Data Notification
 // ============================================
-void notifyTreadmill(uint16_t speed, int16_t incline) {
+void notifyTreadmill(uint16_t speed, int16_t incline, uint32_t distance) {
     if (!pTreadmillData || !deviceConnected) return;
 
     // Treadmill Data format (per Bluetooth FTMS spec):
@@ -213,13 +246,13 @@ void notifyTreadmill(uint16_t speed, int16_t incline) {
     //   Bit 1: Average Speed present
     //   Bit 2: Total Distance present
     //   Bit 3: Inclination and Ramp Angle present
-    // Following bytes: Data fields based on flags
+    // Following bytes: Data fields based on flags (in order of flag bits)
 
-    // We'll include: Instantaneous Speed + Inclination + Ramp Angle
-    uint8_t data[8];
+    // We'll include: Instantaneous Speed + Total Distance + Inclination + Ramp Angle
+    uint8_t data[11];
 
-    // Flags: Inclination and Ramp Angle present (bit 3)
-    uint16_t flags = 0x0008;
+    // Flags: Total Distance present (bit 2) + Inclination and Ramp Angle present (bit 3)
+    uint16_t flags = 0x000C;
     data[0] = flags & 0xFF;
     data[1] = (flags >> 8) & 0xFF;
 
@@ -227,15 +260,20 @@ void notifyTreadmill(uint16_t speed, int16_t incline) {
     data[2] = speed & 0xFF;
     data[3] = (speed >> 8) & 0xFF;
 
+    // Total Distance (uint24, meters) - 3 bytes, little endian
+    data[4] = distance & 0xFF;
+    data[5] = (distance >> 8) & 0xFF;
+    data[6] = (distance >> 16) & 0xFF;
+
     // Inclination (sint16, 0.1% resolution)
-    data[4] = incline & 0xFF;
-    data[5] = (incline >> 8) & 0xFF;
+    data[7] = incline & 0xFF;
+    data[8] = (incline >> 8) & 0xFF;
 
     // Ramp Angle Setting (sint16, 0.1 degree resolution) - set to 0
     int16_t rampAngle = 0;
-    data[6] = rampAngle & 0xFF;
-    data[7] = (rampAngle >> 8) & 0xFF;
+    data[9] = rampAngle & 0xFF;
+    data[10] = (rampAngle >> 8) & 0xFF;
 
-    pTreadmillData->setValue(data, 8);
+    pTreadmillData->setValue(data, 11);
     pTreadmillData->notify();
 }

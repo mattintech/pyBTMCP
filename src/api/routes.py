@@ -1,7 +1,7 @@
 """API routes for device control."""
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .mqtt_client import mqtt_manager
 from .device_registry import device_registry
@@ -16,11 +16,11 @@ class DeviceConfig(BaseModel):
 
 class DeviceValues(BaseModel):
     """Device values update request."""
-    heart_rate: int | None = None
-    speed: float | None = None  # km/h
-    incline: float | None = None  # percent
-    cadence: int | None = None  # rpm
-    power: int | None = None  # watts
+    heart_rate: int | None = Field(None, ge=30, le=220)  # Valid BPM range
+    speed: float | None = Field(None, ge=0, le=50)  # km/h, max 50 km/h
+    incline: float | None = Field(None, ge=-10, le=40)  # percent
+    cadence: int | None = Field(None, ge=0, le=300)  # rpm
+    power: int | None = Field(None, ge=0, le=2000)  # watts
 
 
 @router.get("/devices")

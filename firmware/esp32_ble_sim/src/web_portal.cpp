@@ -5,6 +5,8 @@
 
 WebServer server(80);
 PortalStatus currentStatus = {};
+ResetDistanceCallback resetDistanceCallback = nullptr;
+SetBatteryCallback setBatteryCallback = nullptr;
 
 // HTML template with embedded CSS and JS
 const char INDEX_HTML[] PROGMEM = R"rawliteral(
@@ -78,6 +80,27 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
         button:hover { background: #22c55e; }
         .btn-danger { background: #f87171; }
         .btn-danger:hover { background: #ef4444; }
+        .btn-secondary { background: #6366f1; margin-top: 10px; }
+        .btn-secondary:hover { background: #4f46e5; }
+        .distance-value { font-size: 24px; font-weight: bold; color: #4ade80; }
+        .battery-value { font-size: 24px; font-weight: bold; color: #4ade80; }
+        .hidden { display: none; }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #0f3460;
+            margin: 10px 0;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #4ade80;
+            cursor: pointer;
+        }
         .msg { padding: 10px; border-radius: 8px; margin-bottom: 15px; }
         .msg-success { background: #064e3b; }
         .msg-error { background: #7f1d1d; }
@@ -85,7 +108,7 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
 </head>
 <body>
     <h1>BLE Simulator</h1>
-    <p class="subtitle" id="apName">Loading...</p>
+    <p class="subtitle"><span id="apName">Loading...</span> &bull; UI v1.1.0</p>
 
     <div class="card">
         <h2>Status</h2>
@@ -105,6 +128,24 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             <span>IP Address</span>
             <span id="ipAddr">-</span>
         </div>
+    </div>
+
+    <div class="card hidden" id="heartRateCard">
+        <h2>Heart Rate Monitor</h2>
+        <div class="status-row">
+            <span>Battery Level</span>
+            <span class="battery-value" id="batteryValue">100%</span>
+        </div>
+        <input type="range" id="batterySlider" min="0" max="100" value="100">
+    </div>
+
+    <div class="card hidden" id="treadmillCard">
+        <h2>Treadmill</h2>
+        <div class="status-row">
+            <span>Distance</span>
+            <span class="distance-value" id="distance">0 m</span>
+        </div>
+        <button class="btn-secondary" onclick="resetDistance()">Reset Distance</button>
     </div>
 
     <div class="card">
@@ -164,6 +205,16 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
                 updateStatusDots(data.status);
             } catch (e) {
                 console.error('Failed to update status:', e);
+                // Show disconnected state when device is unreachable
+                updateStatusDots({
+                    wifiConnected: false,
+                    mqttConnected: false,
+                    bleStarted: false,
+                    deviceType: 'Not configured',
+                    ipAddress: '',
+                    treadmillDistance: 0,
+                    batteryLevel: 0
+                });
             }
         }
 
@@ -178,6 +229,25 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             document.getElementById('bleStatus').textContent = status.bleStarted ? status.deviceType : 'Not started';
 
             document.getElementById('ipAddr').textContent = status.ipAddress || '-';
+
+            // Show heart rate card only when configured as heart rate
+            const heartRateCard = document.getElementById('heartRateCard');
+            if (status.deviceType === 'Heart Rate') {
+                heartRateCard.classList.remove('hidden');
+                document.getElementById('batteryValue').textContent = status.batteryLevel + '%';
+                document.getElementById('batterySlider').value = status.batteryLevel;
+            } else {
+                heartRateCard.classList.add('hidden');
+            }
+
+            // Show treadmill card only when configured as treadmill
+            const treadmillCard = document.getElementById('treadmillCard');
+            if (status.deviceType === 'Treadmill') {
+                treadmillCard.classList.remove('hidden');
+                document.getElementById('distance').textContent = status.treadmillDistance + ' m';
+            } else {
+                treadmillCard.classList.add('hidden');
+            }
         }
 
         document.getElementById('configForm').addEventListener('submit', async (e) => {
@@ -223,9 +293,45 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
             }
         }
 
-        // Load config once, then only update status
-        loadConfig();
-        setInterval(updateStatus, 5000);
+        async function resetDistance() {
+            try {
+                await fetch('/api/reset-distance', { method: 'POST' });
+                document.getElementById('distance').textContent = '0 m';
+            } catch (e) {
+                console.error('Failed to reset distance:', e);
+            }
+        }
+
+        // Battery slider handler
+        document.getElementById('batterySlider').addEventListener('input', async (e) => {
+            const level = e.target.value;
+            document.getElementById('batteryValue').textContent = level + '%';
+            try {
+                await fetch('/api/set-battery', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ level: parseInt(level) })
+                });
+            } catch (err) {
+                console.error('Failed to set battery:', err);
+            }
+        });
+
+        // Load config with retry, then update status periodically
+        async function init() {
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    await loadConfig();
+                    break;
+                } catch (e) {
+                    retries--;
+                    if (retries > 0) await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+        }
+        init();
+        setInterval(updateStatus, 3000);
     </script>
 </body>
 </html>
@@ -252,6 +358,8 @@ void handleGetStatus() {
     status["bleStarted"] = currentStatus.bleStarted;
     status["deviceType"] = currentStatus.deviceType;
     status["ipAddress"] = currentStatus.ipAddress;
+    status["treadmillDistance"] = currentStatus.treadmillDistance;
+    status["batteryLevel"] = currentStatus.batteryLevel;
 
     String response;
     serializeJson(doc, response);
@@ -299,11 +407,55 @@ void handleReset() {
     ESP.restart();
 }
 
+void handleResetDistance() {
+    if (resetDistanceCallback) {
+        resetDistanceCallback();
+        Serial.println("Treadmill distance reset");
+    }
+    server.send(200, "application/json", "{\"success\":true}");
+}
+
+void setResetDistanceCallback(ResetDistanceCallback callback) {
+    resetDistanceCallback = callback;
+}
+
+void handleSetBattery() {
+    if (!server.hasArg("plain")) {
+        server.send(400, "application/json", "{\"error\":\"No body\"}");
+        return;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, server.arg("plain"));
+
+    if (error) {
+        server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
+        return;
+    }
+
+    uint8_t level = doc["level"] | 100;
+    if (level > 100) level = 100;
+
+    if (setBatteryCallback) {
+        setBatteryCallback(level);
+        Serial.print("Battery level set to: ");
+        Serial.println(level);
+    }
+
+    server.send(200, "application/json", "{\"success\":true}");
+}
+
+void setSetBatteryCallback(SetBatteryCallback callback) {
+    setBatteryCallback = callback;
+}
+
 void setupWebPortal() {
     server.on("/", HTTP_GET, handleRoot);
     server.on("/api/status", HTTP_GET, handleGetStatus);
     server.on("/api/config", HTTP_POST, handlePostConfig);
     server.on("/api/reset", HTTP_POST, handleReset);
+    server.on("/api/reset-distance", HTTP_POST, handleResetDistance);
+    server.on("/api/set-battery", HTTP_POST, handleSetBattery);
 
     server.begin();
     Serial.println("Web portal started on http://192.168.4.1");

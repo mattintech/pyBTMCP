@@ -23,7 +23,17 @@ struct PortalStatus {
     String ipAddress;
     String deviceType;
     bool bleStarted;
+    uint32_t treadmillDistance;
+    uint8_t batteryLevel;
 };
+
+// Callback for resetting treadmill distance
+typedef void (*ResetDistanceCallback)();
+void setResetDistanceCallback(ResetDistanceCallback callback);
+
+// Callback for setting battery level
+typedef void (*SetBatteryCallback)(uint8_t level);
+void setSetBatteryCallback(SetBatteryCallback callback);
 
 void updatePortalStatus(const PortalStatus& status);
 

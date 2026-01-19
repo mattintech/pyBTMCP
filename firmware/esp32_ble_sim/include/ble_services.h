@@ -12,6 +12,10 @@
 #define HEART_RATE_MEASUREMENT_UUID    "2A37"
 #define BODY_SENSOR_LOCATION_UUID      "2A38"
 
+// Battery Service
+#define BATTERY_SERVICE_UUID           "180F"
+#define BATTERY_LEVEL_UUID             "2A19"
+
 // Fitness Machine Service
 #define FITNESS_MACHINE_SERVICE_UUID   "1826"
 #define TREADMILL_DATA_UUID            "2ACD"
@@ -50,10 +54,17 @@ void setupBLE_Treadmill();
 void notifyHeartRate(uint8_t bpm);
 
 /**
+ * Update battery level
+ * @param level Battery level 0-100%
+ */
+void updateBatteryLevel(uint8_t level);
+
+/**
  * Send treadmill data notification
  * @param speed Speed in 0.01 km/h units
  * @param incline Incline in 0.1% units
+ * @param distance Total distance in meters
  */
-void notifyTreadmill(uint16_t speed, int16_t incline);
+void notifyTreadmill(uint16_t speed, int16_t incline, uint32_t distance);
 
 #endif // BLE_SERVICES_H

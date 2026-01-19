@@ -4,7 +4,7 @@
 // ============================================
 // Firmware Version
 // ============================================
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.0.5"
 
 // ============================================
 // AP Mode Configuration

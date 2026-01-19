@@ -92,6 +92,24 @@ To use pyBTMCP with Claude Desktop, add it to your MCP configuration:
 
 After saving the configuration, restart Claude Desktop. You should see the "ble-simulator" MCP server available.
 
+## MCP Integration (Claude Code CLI)
+
+To add pyBTMCP to Claude Code, run:
+
+```bash
+claude mcp add ble-simulator \
+  -s user \
+  -- docker run -i --rm -p 1883:1883 -p 8000:8000 --name pybtmcp pybtmcp:latest
+```
+
+This adds the MCP server to your user configuration. Use `-s project` instead to add it to the current project only.
+
+To verify the server was added:
+
+```bash
+claude mcp list
+```
+
 ## MCP Tools Reference
 
 Once configured, Claude can use these tools to control BLE devices:

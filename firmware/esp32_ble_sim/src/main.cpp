@@ -42,8 +42,11 @@ bool apModeActive = false;
 
 // Simulated values
 uint8_t heartRate = 70;
+uint8_t batteryLevel = 100;       // Battery level 0-100%
 uint16_t treadmillSpeed = 0;      // 0.01 km/h resolution
 int16_t treadmillIncline = 0;     // 0.1% resolution
+uint32_t treadmillDistance = 0;   // Total distance in meters
+float distanceAccumulator = 0.0;  // Fractional distance accumulator
 
 // Timing
 unsigned long lastNotify = 0;
@@ -165,7 +168,7 @@ void publishStatus() {
     serializeJson(doc, payload);
 
     String topic = String("ble-sim/") + configManager.getDeviceId() + "/status";
-    mqtt.publish(topic.c_str(), payload.c_str());
+    mqtt.publish(topic.c_str(), payload.c_str(), true);  // retained
 }
 
 void publishValues() {
@@ -175,9 +178,11 @@ void publishValues() {
 
     if (currentDeviceType == DEVICE_HEART_RATE) {
         doc["heart_rate"] = heartRate;
+        doc["battery"] = batteryLevel;
     } else if (currentDeviceType == DEVICE_TREADMILL) {
         doc["speed"] = treadmillSpeed / 100.0;
         doc["incline"] = treadmillIncline / 10.0;
+        doc["distance"] = treadmillDistance;
     }
 
     String payload;
@@ -230,6 +235,13 @@ void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
             Serial.print("Heart rate set to: ");
             Serial.println(heartRate);
         }
+        if (doc["battery"].is<int>()) {
+            batteryLevel = doc["battery"];
+            if (batteryLevel > 100) batteryLevel = 100;
+            updateBatteryLevel(batteryLevel);
+            Serial.print("Battery level set to: ");
+            Serial.println(batteryLevel);
+        }
         if (doc["speed"].is<float>()) {
             float speed = doc["speed"];
             treadmillSpeed = (uint16_t)(speed * 100);
@@ -241,6 +253,12 @@ void handleMqttMessage(char* topic, byte* payload, unsigned int length) {
             treadmillIncline = (int16_t)(incline * 10);
             Serial.print("Incline set to: ");
             Serial.println(incline);
+        }
+        if (doc["distance"].is<int>()) {
+            treadmillDistance = doc["distance"];
+            distanceAccumulator = (float)treadmillDistance;  // Sync accumulator
+            Serial.print("Distance set to: ");
+            Serial.println(treadmillDistance);
         }
 
         publishValues();
@@ -285,9 +303,14 @@ void connectToMQTT() {
 
     String clientId = String("esp32-") + String(random(0xffff), HEX);
 
-    if (mqtt.connect(clientId.c_str())) {
+    // Set up Last Will and Testament (LWT) for disconnect detection
+    String statusTopic = String("ble-sim/") + configManager.getDeviceId() + "/status";
+    String willMessage = "{\"online\":false}";
+
+    // Connect with LWT: topic, QoS 1, retain true, message
+    if (mqtt.connect(clientId.c_str(), statusTopic.c_str(), 1, true, willMessage.c_str())) {
         mqttConnected = true;
-        Serial.println("MQTT connected!");
+        Serial.println("MQTT connected with LWT!");
 
         // Subscribe to control topics
         String configTopic = String("ble-sim/") + configManager.getDeviceId() + "/config";
@@ -299,12 +322,31 @@ void connectToMQTT() {
         Serial.print("Subscribed to: ");
         Serial.println(configTopic);
 
-        // Publish initial status
+        // Publish initial status (with retain so new subscribers see current state)
         publishStatus();
     } else {
         Serial.print("MQTT connection failed, rc=");
         Serial.println(mqtt.state());
     }
+}
+
+// ============================================
+// Reset Treadmill Distance
+// ============================================
+void resetTreadmillDistance() {
+    treadmillDistance = 0;
+    distanceAccumulator = 0.0;
+    Serial.println("Treadmill distance reset to 0");
+}
+
+// ============================================
+// Set Battery Level (from web UI)
+// ============================================
+void setBatteryLevelCallback(uint8_t level) {
+    batteryLevel = level;
+    updateBatteryLevel(batteryLevel);
+    Serial.print("Battery level set via web UI: ");
+    Serial.println(batteryLevel);
 }
 
 // ============================================
@@ -316,6 +358,8 @@ void updateStatus() {
     status.mqttConnected = mqttConnected;
     status.bleStarted = bleStarted;
     status.ipAddress = wifiConnected ? WiFi.localIP().toString() : "";
+    status.treadmillDistance = treadmillDistance;
+    status.batteryLevel = batteryLevel;
 
     if (currentDeviceType == DEVICE_HEART_RATE) {
         status.deviceType = "Heart Rate";
@@ -353,6 +397,8 @@ void setup() {
 
     // Start web configuration portal
     setupWebPortal();
+    setResetDistanceCallback(resetTreadmillDistance);
+    setSetBatteryCallback(setBatteryLevelCallback);
 
     // Initialize MQTT
     setupMQTT();
@@ -390,7 +436,13 @@ void loop() {
         if (currentDeviceType == DEVICE_HEART_RATE) {
             notifyHeartRate(heartRate);
         } else if (currentDeviceType == DEVICE_TREADMILL) {
-            notifyTreadmill(treadmillSpeed, treadmillIncline);
+            // Accumulate distance based on speed
+            // Speed is in 0.01 km/h units, interval is 1 second
+            // meters per second = (speed/100) * 1000 / 3600 = speed / 360
+            distanceAccumulator += treadmillSpeed / 360.0;
+            treadmillDistance = (uint32_t)distanceAccumulator;
+
+            notifyTreadmill(treadmillSpeed, treadmillIncline, treadmillDistance);
         }
     }
 
