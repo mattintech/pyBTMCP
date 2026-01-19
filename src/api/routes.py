@@ -32,6 +32,12 @@ class HRVariationConfig(BaseModel):
     target: int | None = Field(None, ge=30, le=220)
 
 
+class BLEDisconnectRequest(BaseModel):
+    """BLE disconnect request."""
+    duration_ms: int = Field(0, ge=0, le=60000)  # Max 60 seconds
+    teardown: bool = Field(False, description="Full BLE stack teardown (device disappears from scans)")
+
+
 @router.get("/devices")
 async def list_devices():
     """List all connected devices."""
@@ -110,6 +116,27 @@ async def set_device_values(device_id: str, values: DeviceValues):
     device_registry.update_device(device_id, {"values": values_dict})
 
     return {"status": "ok", "device_id": device_id, "values": values_dict}
+
+
+@router.post("/devices/{device_id}/disconnect")
+async def disconnect_ble(device_id: str, request: BLEDisconnectRequest = BLEDisconnectRequest()):
+    """Simulate a BLE disconnect.
+
+    Args:
+        device_id: The ESP32 device ID
+        request: Optional duration_ms and teardown parameters
+    """
+    if not mqtt_manager.is_connected:
+        raise HTTPException(status_code=503, detail="MQTT not connected")
+
+    await mqtt_manager.disconnect_ble(device_id, request.duration_ms, request.teardown)
+
+    return {
+        "status": "ok",
+        "device_id": device_id,
+        "duration_ms": request.duration_ms,
+        "teardown": request.teardown
+    }
 
 
 @router.get("/devices/{device_id}/hr-variation")

@@ -280,6 +280,43 @@
             opacity: 0.8;
         }
 
+        /* BLE Test controls */
+        .ble-tests {
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--accent);
+        }
+
+        .ble-tests label {
+            display: block;
+            color: var(--text-dim);
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .ble-test-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .ble-test-btn {
+            background: var(--accent);
+            color: var(--text);
+            border: none;
+            border-radius: 8px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .ble-test-btn:hover { background: #1a4a7a; }
+        .ble-test-btn.warning {
+            background: var(--warning);
+            color: var(--bg);
+        }
+        .ble-test-btn.warning:hover { opacity: 0.9; }
+
         /* WebSocket connection status */
         .connection-status {
             display: flex;
@@ -311,7 +348,7 @@
     <div class="header">
         <div>
             <h1>pyBTMCP</h1>
-            <p class="subtitle">BLE Device Simulator &bull; UI v1.4.0 &bull; API <span id="backendVersion"></span></p>
+            <p class="subtitle">BLE Device Simulator &bull; UI v1.5.0 &bull; API <span id="backendVersion"></span></p>
         </div>
         <div class="header-buttons">
             <div class="connection-status">
@@ -706,6 +743,18 @@
                             </select>
                         </div>
 
+                        ${device.type ? `
+                        <div class="ble-tests">
+                            <label>BLE Connection Tests</label>
+                            <div class="ble-test-buttons">
+                                <button class="ble-test-btn" onclick="disconnectBle('${device.id}', 0, false)" title="Disconnect client, immediately resume advertising">Quick Drop</button>
+                                <button class="ble-test-btn" onclick="disconnectBle('${device.id}', 5000, false)" title="Disconnect and pause advertising for 5 seconds">5s Pause</button>
+                                <button class="ble-test-btn warning" onclick="disconnectBle('${device.id}', 3000, true)" title="Full BLE teardown - device disappears from scans for 3 seconds">BLE Restart</button>
+                                <button class="ble-test-btn warning" onclick="disconnectBle('${device.id}', 10000, true)" title="Full BLE teardown - device disappears from scans for 10 seconds">10s Restart</button>
+                            </div>
+                        </div>
+                        ` : ''}
+
                         ${renderControls(device)}
                     </div>
                 `).join('');
@@ -964,6 +1013,30 @@
             } catch (error) {
                 console.error('Failed to delete device:', error);
                 alert('Failed to delete device. Check console for details.');
+            }
+        }
+
+        async function disconnectBle(deviceId, durationMs = 0, teardown = false) {
+            try {
+                const response = await fetch(`${API_BASE}/devices/${deviceId}/disconnect`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_ms: durationMs, teardown: teardown })
+                });
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    console.error('Failed to disconnect BLE:', error.detail || response.statusText);
+                    return;
+                }
+                if (teardown) {
+                    console.log(`BLE teardown on ${deviceId}, reinit in ${durationMs || 3000}ms`);
+                } else if (durationMs > 0) {
+                    console.log(`BLE disconnected on ${deviceId}, pausing ${durationMs}ms`);
+                } else {
+                    console.log(`BLE disconnected on ${deviceId}, immediate re-advertise`);
+                }
+            } catch (error) {
+                console.error('Failed to disconnect BLE:', error);
             }
         }
 

@@ -47,11 +47,8 @@ void setup() {
 
     Serial.println("\nReady!");
     if (!configService.isConfigured()) {
-        Serial.println("Configure at: http://192.168.4.1");
-    } else {
-        Serial.println("Connecting to WiFi...");
+        Serial.println("Configure at: http://192.168.4.1\n");
     }
-    Serial.println("Waiting for MQTT commands...\n");
 }
 
 void loop() {

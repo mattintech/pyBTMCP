@@ -30,10 +30,11 @@ void MqttService::loop() {
     connectToMQTT();
     mqtt.loop();
 
-    // Periodic status report
+    // Periodic status and values report
     if (mqttConnected && millis() - lastStatusReport >= STATUS_REPORT_INTERVAL) {
         lastStatusReport = millis();
         publishStatus();
+        publishValues();  // Include current values (e.g., accumulated distance)
     }
 }
 
@@ -83,9 +84,11 @@ void MqttService::connectToMQTT() {
         // Subscribe to control topics
         String configTopic = String("ble-sim/") + configService.getDeviceId() + "/config";
         String setTopic = String("ble-sim/") + configService.getDeviceId() + "/set";
+        String disconnectTopic = String("ble-sim/") + configService.getDeviceId() + "/disconnect";
 
         mqtt.subscribe(configTopic.c_str());
         mqtt.subscribe(setTopic.c_str());
+        mqtt.subscribe(disconnectTopic.c_str());
 
         Serial.print("Subscribed to: ");
         Serial.println(configTopic);
@@ -160,6 +163,23 @@ void MqttService::handleMessage(char* topic, byte* payload, unsigned int length)
         }
 
         publishValues();
+    }
+    // Handle BLE disconnect command
+    else if (topicStr == baseTopic + "/disconnect") {
+        int duration = doc["duration_ms"] | 0;  // 0 = immediate resume
+        bool teardown = doc["teardown"] | false;  // Full BLE stack teardown
+
+        if (teardown) {
+            // Full teardown - device disappears from scans
+            int teardownDuration = duration > 0 ? duration : 3000;  // Default 3s for teardown
+            bleService.teardownForDuration(teardownDuration);
+        } else if (duration > 0) {
+            // Just disconnect and pause advertising
+            bleService.disconnectClientForDuration(duration);
+        } else {
+            // Just disconnect, immediate re-advertise
+            bleService.disconnectClient();
+        }
     }
 }
 

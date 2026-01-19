@@ -139,6 +139,15 @@ class HRVariationManager:
 
     async def _send_hr(self, device_id: str, hr: int):
         """Send HR value to device via MQTT and update registry."""
+        # Only send HR to devices configured as heart_rate type
+        if self._device_registry:
+            device = self._device_registry.get_device(device_id)
+            if device and device.get("type") != "heart_rate":
+                # Device is not a heart rate monitor, disable variation
+                if device_id in self._devices and self._devices[device_id].enabled:
+                    self._devices[device_id].enabled = False
+                return
+
         if self._mqtt_manager and self._mqtt_manager.is_connected:
             await self._mqtt_manager.publish(
                 f"ble-sim/{device_id}/set",

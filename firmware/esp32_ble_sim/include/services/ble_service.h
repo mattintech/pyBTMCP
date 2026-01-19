@@ -44,13 +44,23 @@ public:
     // State
     bool isClientConnected() const { return deviceConnected; }
 
+    // Disconnect simulation
+    void disconnectClient();                    // Force disconnect + immediate re-advertise
+    void disconnectClientForDuration(int ms);   // Disconnect + pause advertising for duration
+    void teardownForDuration(int ms);           // Full BLE deinit + reinit after duration
+
 private:
     BleService() = default;
 
     bool deviceConnected = false;
     unsigned long lastNotify = 0;
+    unsigned long advertisingResumeTime = 0;    // When to resume advertising (0 = not paused)
+    bool advertisingPaused = false;
+    unsigned long teardownResumeTime = 0;       // When to reinit BLE after teardown
+    bool teardownPending = false;
 
     void initBLE();
+    void reinitBLE();                           // Reinit BLE and restore services
 };
 
 #define bleService BleService::getInstance()

@@ -152,6 +152,32 @@ async def list_tools() -> list[Tool]:
                 "required": ["device_id"],
             },
         ),
+        Tool(
+            name="simulate_ble_disconnect",
+            description="Simulate a BLE client disconnection to test reconnection behavior",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "device_id": {
+                        "type": "string",
+                        "description": "The ESP32 device ID",
+                    },
+                    "duration_ms": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 60000,
+                        "default": 0,
+                        "description": "How long to pause advertising after disconnect (0 = immediate resume)",
+                    },
+                    "teardown": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Full BLE stack teardown - device completely disappears from scans",
+                    },
+                },
+                "required": ["device_id"],
+            },
+        ),
     ]
 
 
@@ -285,6 +311,38 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(
                     type="text",
                     text=f"Device {device_id} not found"
+                )]
+
+        elif name == "simulate_ble_disconnect":
+            device_id = arguments["device_id"]
+            duration_ms = arguments.get("duration_ms", 0)
+            teardown = arguments.get("teardown", False)
+
+            payload = {}
+            if duration_ms > 0:
+                payload["duration_ms"] = duration_ms
+            if teardown:
+                payload["teardown"] = True
+
+            await mqtt_client.publish(
+                f"ble-sim/{device_id}/disconnect",
+                json.dumps(payload)
+            )
+
+            if teardown:
+                return [TextContent(
+                    type="text",
+                    text=f"BLE stack teardown on {device_id}, will reinit in {duration_ms if duration_ms > 0 else 3000}ms"
+                )]
+            elif duration_ms > 0:
+                return [TextContent(
+                    type="text",
+                    text=f"Disconnected BLE on {device_id}, advertising paused for {duration_ms}ms"
+                )]
+            else:
+                return [TextContent(
+                    type="text",
+                    text=f"Disconnected BLE on {device_id}, advertising resumed immediately"
                 )]
 
         else:

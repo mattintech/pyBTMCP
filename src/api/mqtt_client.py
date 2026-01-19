@@ -132,6 +132,21 @@ class MQTTManager:
             values
         )
 
+    async def disconnect_ble(self, device_id: str, duration_ms: int = 0, teardown: bool = False):
+        """Trigger BLE disconnect on a device.
+
+        Args:
+            device_id: The ESP32 device ID
+            duration_ms: How long to pause advertising after disconnect (0 = immediate resume)
+            teardown: If True, fully tear down BLE stack (device disappears from scans)
+        """
+        payload = {}
+        if duration_ms > 0:
+            payload["duration_ms"] = duration_ms
+        if teardown:
+            payload["teardown"] = True
+        await self.publish(f"ble-sim/{device_id}/disconnect", payload)
+
 
 # Global MQTT manager instance
 mqtt_manager = MQTTManager()

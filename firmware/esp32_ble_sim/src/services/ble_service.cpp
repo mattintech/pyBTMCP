@@ -18,9 +18,11 @@ static NimBLEService* pBatteryService = nullptr;
 static NimBLEService* pFitnessMachineService = nullptr;
 
 static bool bleInitialized = false;
+static uint16_t currentConnId = 0;              // Track connection ID for disconnect
+static bool advertisingPausedFlag = false;      // Shared with callbacks
 
 // Forward declare for callback
-static void onBleConnect();
+static void onBleConnect(NimBLEServer* server);
 static void onBleDisconnect();
 
 // ============================================
@@ -28,7 +30,7 @@ static void onBleDisconnect();
 // ============================================
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) override {
-        onBleConnect();
+        onBleConnect(pServer);
     }
 
     void onDisconnect(NimBLEServer* pServer) override {
@@ -36,15 +38,26 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     }
 };
 
-static void onBleConnect() {
+static void onBleConnect(NimBLEServer* server) {
+    // Track connection ID for forced disconnect
+    // getPeerInfo(0) gets the first (most recent) connected peer
+    NimBLEConnInfo peerInfo = server->getPeerInfo(0);
+    currentConnId = peerInfo.getConnHandle();
     deviceState.setBleClientConnected(true);
-    Serial.println("BLE client connected");
+    Serial.print("BLE client connected (connId: ");
+    Serial.print(currentConnId);
+    Serial.println(")");
 }
 
 static void onBleDisconnect() {
+    currentConnId = 0;
     deviceState.setBleClientConnected(false);
     Serial.println("BLE client disconnected");
-    NimBLEDevice::startAdvertising();
+
+    // Only auto-resume advertising if not paused
+    if (!advertisingPausedFlag) {
+        NimBLEDevice::startAdvertising();
+    }
 }
 
 // ============================================
@@ -63,7 +76,23 @@ void BleService::setup() {
 }
 
 void BleService::loop() {
+    // Check if BLE should be reinitialized after teardown
+    if (teardownPending && teardownResumeTime > 0 && millis() >= teardownResumeTime) {
+        teardownResumeTime = 0;
+        teardownPending = false;
+        reinitBLE();
+    }
+
     if (!deviceState.isBleStarted()) return;
+
+    // Check if advertising should be resumed after timed pause
+    if (advertisingPaused && advertisingResumeTime > 0 && millis() >= advertisingResumeTime) {
+        advertisingResumeTime = 0;
+        advertisingPaused = false;
+        advertisingPausedFlag = false;
+        NimBLEDevice::startAdvertising();
+        Serial.println("Advertising resumed after timed pause");
+    }
 
     // Send notifications at regular intervals
     if (millis() - lastNotify >= BLE_NOTIFY_INTERVAL) {
@@ -268,4 +297,85 @@ void BleService::notifyTreadmill(uint16_t speed, int16_t incline, uint32_t dista
 
     pTreadmillData->setValue(data, 11);
     pTreadmillData->notify();
+}
+
+// ============================================
+// Disconnect Simulation
+// ============================================
+void BleService::disconnectClient() {
+    if (!pServer || !deviceState.getConnectionState().bleClientConnected) {
+        Serial.println("No BLE client connected to disconnect");
+        return;
+    }
+
+    Serial.println("Forcing BLE client disconnect (immediate re-advertise)");
+    pServer->disconnect(currentConnId);
+    // onBleDisconnect callback will handle re-advertising
+}
+
+void BleService::disconnectClientForDuration(int ms) {
+    if (!pServer || !deviceState.getConnectionState().bleClientConnected) {
+        Serial.println("No BLE client connected to disconnect");
+        return;
+    }
+
+    Serial.print("Forcing BLE client disconnect, pausing advertising for ");
+    Serial.print(ms);
+    Serial.println("ms");
+
+    // Set flags before disconnect so callback knows not to auto-resume
+    advertisingPaused = true;
+    advertisingPausedFlag = true;
+    advertisingResumeTime = millis() + ms;
+
+    pServer->disconnect(currentConnId);
+    // onBleDisconnect callback will NOT resume advertising due to flag
+}
+
+void BleService::teardownForDuration(int ms) {
+    Serial.print("Tearing down BLE stack, will reinit in ");
+    Serial.print(ms);
+    Serial.println("ms");
+
+    // Clear all service/characteristic pointers
+    pHeartRateMeasurement = nullptr;
+    pBatteryLevel = nullptr;
+    pTreadmillData = nullptr;
+    pHeartRateService = nullptr;
+    pBatteryService = nullptr;
+    pFitnessMachineService = nullptr;
+    pServer = nullptr;
+    pAdvertising = nullptr;
+
+    // Full BLE deinit
+    NimBLEDevice::deinit(true);
+    bleInitialized = false;
+    currentConnId = 0;
+    deviceConnected = false;
+    deviceState.setBleClientConnected(false);
+
+    // Schedule reinit
+    teardownPending = true;
+    teardownResumeTime = millis() + ms;
+
+    Serial.println("BLE stack torn down - device will disappear from scans");
+}
+
+void BleService::reinitBLE() {
+    Serial.println("Reinitializing BLE stack after teardown...");
+
+    // Reinit the BLE stack
+    initBLE();
+
+    // Restore the previous device type configuration
+    DeviceType currentType = deviceState.getDeviceType();
+    if (currentType == DeviceType::HEART_RATE) {
+        setupHeartRate();
+        Serial.println("Restored Heart Rate service");
+    } else if (currentType == DeviceType::TREADMILL) {
+        setupTreadmill();
+        Serial.println("Restored Treadmill service");
+    }
+
+    Serial.println("BLE stack reinitialized - device visible again");
 }
